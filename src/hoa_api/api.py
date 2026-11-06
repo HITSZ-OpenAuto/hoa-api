@@ -175,8 +175,10 @@ def create_app(config: Config | None = None, store: Store | None = None) -> Fast
             course.pop("lecturers", None)
         if "grading" not in wanted:
             course.pop("grading", None)
-        if "materials" not in wanted:
-            course.pop("materials", None)
+        if "materials" in wanted:
+            materials = service.get_materials(code)
+            if materials:
+                course["materials"] = materials
         return course
 
     @api.get("/courses/{code}/readme", tags=["courses"], summary="课程 README")

@@ -82,6 +82,16 @@ Streamable HTTP（无状态模式），工具：
 
 同步策略：`readme.toml` / `README.md` 走 raw.githubusercontent（无 API 配额）；目录树与 commit 走 api.github.com（带 ETag 条件请求，304 不计配额）。默认每 6 小时增量同步一次。
 
+## 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [docs/API.md](docs/API.md) | REST 与 MCP 完整参考 |
+| [docs/DESIGN.md](docs/DESIGN.md) | 方案设计（为什么做、数据模型、架构取舍） |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | 部署指南（systemd + nginx） |
+| [docs/MIGRATION-HIT-A.md](docs/MIGRATION-HIT-A.md) | HIT-A `course-server` 迁移说明 |
+| [docs/openapi.yaml](docs/openapi.yaml) | OpenAPI 契约（由实现导出，CI 校验不漂移） |
+
 ## 快速开始
 
 ```bash
