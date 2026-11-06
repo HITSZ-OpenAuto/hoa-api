@@ -36,6 +36,32 @@ def semester_slug(text: str | None) -> str | None:
     return None
 
 
+PLACEHOLDER_VALUES = {
+    "课程中文名称",
+    "课程名称",
+    "CODE1234",
+    "在这里填写课程的简要介绍。",
+    "（课程名）",
+}
+
+
+def is_placeholder(value: str | None) -> bool:
+    """判断字段是否仍是模板占位值。
+
+    部分课程仓建好后没有填写内容，``readme.toml`` 保持着模板原文
+    （``course_code = "CODE1234"``、``course_name = "课程中文名称"``）。
+    这些值必须当作空值处理，否则会污染课程名与别名。
+    """
+    if value is None:
+        return True
+    text = value.strip()
+    if not text:
+        return True
+    if text in PLACEHOLDER_VALUES:
+        return True
+    return text.startswith("在这里填写")
+
+
 def loads_toml(text: str) -> dict[str, Any]:
     """解析 TOML 文本，失败时返回空字典。"""
     if not text.strip():
@@ -129,14 +155,20 @@ def teacher_review_counts(lecturers: dict[str, Any]) -> list[tuple[str, int]]:
 
 
 def parse_course_toml(text: str) -> dict[str, Any]:
-    """解析 `readme.toml`，返回规范化字段。"""
+    """解析 `readme.toml`，返回规范化字段。
+
+    模板占位值一律当作空值，由调用方回退到仓库描述。
+    """
     data = loads_toml(text)
     lecturers = normalize_lecturers(data.get("lecturers"))
+    name = str(data.get("course_name") or "").strip()
+    code = str(data.get("course_code") or "").strip()
+    description = str(data.get("description") or "").strip()
     return {
-        "name": str(data.get("course_name") or "").strip(),
-        "code": str(data.get("course_code") or "").strip(),
+        "name": "" if is_placeholder(name) else name,
+        "code": "" if is_placeholder(code) else code,
         "repo_type": str(data.get("repo_type") or "normal").strip(),
-        "description": str(data.get("description") or "").strip(),
+        "description": "" if is_placeholder(description) else description,
         "lecturers": lecturers,
         "sections": normalize_sections(data.get("sections")),
         "teachers": lecturer_names(lecturers),

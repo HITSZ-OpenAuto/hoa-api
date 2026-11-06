@@ -81,6 +81,36 @@ def test_parse_empty_toml_is_safe():
     assert parsed["sections"] == []
 
 
+def test_placeholder_values_are_treated_as_empty():
+    """未填写内容的课程仓仍保持着模板原文，不能污染课程名与别名。"""
+    parsed = parse_course_toml(
+        """
+course_name = "课程中文名称"
+repo_type = "normal"
+course_code = "CODE1234"
+description = \"\"\"
+在这里填写课程的简要介绍。
+可以换行。
+\"\"\"
+"""
+    )
+    assert parsed["name"] == ""
+    assert parsed["code"] == ""
+    assert parsed["description"] == ""
+
+
+def test_is_placeholder():
+    from hoa_api.course_data import is_placeholder
+
+    assert is_placeholder("CODE1234")
+    assert is_placeholder("课程中文名称")
+    assert is_placeholder("在这里填写课程的简要介绍。\n可以换行。")
+    assert is_placeholder("")
+    assert is_placeholder(None)
+    assert not is_placeholder("机器人学导论")
+    assert not is_placeholder("AUTO3005")
+
+
 def test_normalize_lecturers_handles_garbage():
     result = normalize_lecturers({"items": ["not-a-dict", {"no_name": 1}, {"name": "A"}]})
     assert [item["name"] for item in result["items"]] == ["A"]

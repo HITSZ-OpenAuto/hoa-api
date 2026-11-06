@@ -33,6 +33,11 @@ MAJOR_DATA_TARBALL = "https://github.com/HITSZ-OpenAuto/hoa-major-data/archive/r
 
 MATERIAL_DIRS = ("assignments", "exams", "labs", "notes", "slides", "textbooks", "resources")
 SKIP_TOP = {"README.md", "readme.toml", "LICENSE", ".github", ".git", ".gitignore"}
+TEMPLATE_REPOS = {
+    "course-template",
+    "normal-course-template",
+    "multi-project-course-template",
+}
 
 
 def now_iso() -> str:
@@ -123,6 +128,8 @@ class SyncPipeline:
         meta = self._fetch_org_repos()
         courses = []
         for repo in repo_list:
+            if repo in TEMPLATE_REPOS or repo.endswith("-course-template"):
+                continue
             info = meta.get(repo)
             if not info:
                 continue
