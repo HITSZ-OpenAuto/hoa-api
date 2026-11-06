@@ -344,6 +344,8 @@ jobs:
           passphrase: ${{ secrets.PASSPHRASE }}
           port: ${{ inputs.vps_port }}
           envs: GHCR_TOKEN,GITHUB_TOKEN_FOR_SYNC,IMAGE_TAGS,CONTAINER,API_DOMAIN,ADDITIONAL_DOMAINS,APP_PORT,TRAEFIK_DIR,TRAEFIK_NET,CERT_RESOLVER
+          # 首次部署的预热同步需要 5-10 分钟，默认 10 分钟超时不够
+          command_timeout: 25m
           script: |
             bash <<'BASH_EOF'
             set -eo pipefail
@@ -364,6 +366,35 @@ jobs:
             echo "=== 启动容器 ==="
             docker volume create hoa-api-data >/dev/null
             docker rm -f "${container}" 2>/dev/null || true
+
+            # 首次部署时数据卷是空的。容器本身是「先服务、后台同步」，
+            # 直接起服务会让公开接口在前几分钟返回空结果。
+            # 这里先用一次性容器把数据同步好，再启动对外服务。
+            echo "=== 检查数据是否已就绪 ==="
+            # 数据卷首次挂载时可能属主是 root，而容器以 uid 10001 运行，先纠正属主
+            docker run --rm --user root -v hoa-api-data:/app/data "${image_ref}" \
+              chown -R 10001:10001 /app/data 2>/dev/null || true
+            COURSE_COUNT="$(docker run --rm -v hoa-api-data:/app/data "${image_ref}" \
+              hoa-api stats 2>/dev/null | python3 -c '
+              import json,sys
+              try:
+                  print(json.load(sys.stdin).get("course_count", 0))
+              except Exception:
+                  print(0)
+              ' || echo 0)"
+            echo "  当前课程数: ${COURSE_COUNT}"
+            if [ "${COURSE_COUNT}" -lt 100 ]; then
+              echo "=== 预热数据（一次性同步，约 5-10 分钟）==="
+              docker run --rm \
+                --name hoa-api-sync \
+                --network "${net}" \
+                -v hoa-api-data:/app/data \
+                -e GITHUB_TOKEN="${GITHUB_TOKEN_FOR_SYNC}" \
+                -e HOA_DB_PATH=/app/data/hoa.db \
+                "${image_ref}" hoa-api sync
+            else
+              echo "  数据已就绪，跳过预热"
+            fi
 
             # 允许的对外域名：主域名 + 额外域名
             domains="${API_DOMAIN}"
