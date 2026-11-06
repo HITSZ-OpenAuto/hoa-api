@@ -520,6 +520,16 @@ class Store:
             for row in rows
         ]
 
+    def prune_courses(self, valid_repos: set[str]) -> int:
+        """删除已不在仓库清单中的课程（模板仓、已删仓等），返回清理条数。"""
+        rows = self._conn.execute("SELECT code, repo FROM courses").fetchall()
+        stale = [row["code"] for row in rows if row["repo"] not in valid_repos]
+        for code in stale:
+            self._conn.execute("DELETE FROM courses WHERE code = ?", (code,))
+            self._conn.execute("DELETE FROM materials WHERE course_code = ?", (code,))
+            self._conn.execute("DELETE FROM teachers WHERE course_code = ?", (code,))
+        return len(stale)
+
     # ---------- sync bookkeeping ----------
 
     def get_repo_sync(self, repo: str) -> sqlite3.Row | None:

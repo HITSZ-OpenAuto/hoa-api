@@ -57,6 +57,7 @@ class SyncReport:
     materials: int = 0
     grades: int = 0
     plans: int = 0
+    pruned: int = 0
     errors: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -70,6 +71,7 @@ class SyncReport:
             "materials": self.materials,
             "grades": self.grades,
             "plans": self.plans,
+            "pruned": self.pruned,
             "errors": self.errors[:20],
         }
 
@@ -119,6 +121,8 @@ class SyncPipeline:
                 report.errors.append(f"major-data: {exc}")
 
         report.materials = self.store.count_materials()
+        # 清理不在清单里的残留课程（模板仓、已删除的仓等）
+        report.pruned = self.store.prune_courses({item["repo"] for item in repos})
         report.finished_at = now_iso()
         self.store.set_meta("last_sync_at", report.finished_at)
         self.store.set_meta("last_sync_report", str(report.as_dict()))
