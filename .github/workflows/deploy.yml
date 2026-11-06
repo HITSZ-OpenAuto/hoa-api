@@ -415,6 +415,7 @@ jobs:
               -e GITHUB_TOKEN="${GITHUB_TOKEN_FOR_SYNC}" \
               -e HOA_DB_PATH=/app/data/hoa.db \
               -e HOA_SITE_ORIGIN=https://hoa.moe \
+              -e HOA_PUBLIC_ORIGIN="https://${API_DOMAIN}" \
               -e HOA_SYNC_INTERVAL_SEC=21600 \
               -e HOA_RATE_LIMIT_PER_MIN=120 \
               -e HOA_MCP_ALLOWED_HOSTS="${host_allow}" \

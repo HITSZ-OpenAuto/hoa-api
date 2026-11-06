@@ -185,7 +185,7 @@ class Service:
             "course_count": self.store.count_courses(),
             "teacher_count": self.store.count_teachers(),
             "org": self.config.org,
-            "mcp_endpoint": f"{self.config.site_origin.rstrip('/')}{self.config.mcp_path}",
+            "mcp_endpoint": self.config.public_mcp_url,
             "base_url": self.config.public_base_url,
         }
 

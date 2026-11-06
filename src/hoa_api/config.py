@@ -33,6 +33,9 @@ class Config:
     site_origin: str = os.getenv("HOA_SITE_ORIGIN", "https://hoa.moe")
     api_base_path: str = os.getenv("HOA_API_BASE_PATH", "/api/v1")
     mcp_path: str = os.getenv("HOA_MCP_PATH", "/mcp")
+    # API 自身的对外地址。默认跟随站点地址，独立部署时应显式指定，
+    # 否则 /api/v1/meta 里给出的 base_url / mcp_endpoint 会指向站点而不是 API。
+    public_origin: str = os.getenv("HOA_PUBLIC_ORIGIN", "")
     mcp_allowed_hosts: str = os.getenv(
         "HOA_MCP_ALLOWED_HOSTS",
         "localhost,127.0.0.1,[::1],api.hoa.moe,api.hita.limpu.cn",
@@ -75,8 +78,17 @@ class Config:
         return [item.strip() for item in self.mcp_allowed_origins.split(",") if item.strip()]
 
     @property
+    def public_origin_url(self) -> str:
+        """API 的对外访问根地址；未显式配置时跟随站点地址。"""
+        return (self.public_origin or self.site_origin).rstrip("/")
+
+    @property
     def public_base_url(self) -> str:
-        return f"{self.site_origin.rstrip('/')}{self.api_base_path}"
+        return f"{self.public_origin_url}{self.api_base_path}"
+
+    @property
+    def public_mcp_url(self) -> str:
+        return f"{self.public_origin_url}{self.mcp_path}"
 
 
 _config: Config | None = None

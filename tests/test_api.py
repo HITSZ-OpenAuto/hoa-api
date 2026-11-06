@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from hoa_api.api import create_app
 from hoa_api.config import Config
 from hoa_api.db import Store
+from hoa_api.service import Service
 
 
 @pytest.fixture()
@@ -52,6 +53,26 @@ def test_meta(client):
     assert data["api_version"] == "v1"
     assert data["course_count"] == 1
     assert data["teacher_count"] == 1
+
+
+def test_meta_public_urls_follow_public_origin():
+    """API 自身的对外地址应跟随 HOA_PUBLIC_ORIGIN，而不是站点地址。
+
+    官方部署里站点在 hoa.moe、API 在 api.hoa.moe，
+    meta 里给出的 base_url / mcp_endpoint 必须指向 API 本身。
+    """
+    config = Config(
+        db_path=":memory:",
+        rate_limit_per_min=1000,
+        site_origin="https://hoa.moe",
+        public_origin="https://api.hoa.moe",
+    )
+    store = Store(config.db_path)
+    service = Service(store, config)
+    meta = service.meta()
+    assert meta["base_url"] == "https://api.hoa.moe/api/v1"
+    assert meta["mcp_endpoint"] == "https://api.hoa.moe/mcp"
+    store.close()
 
 
 def test_list_courses(client):
