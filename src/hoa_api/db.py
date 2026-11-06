@@ -118,7 +118,30 @@ class Store:
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """给已存在的旧版本库补齐新增列。
+
+        ``CREATE TABLE IF NOT EXISTS`` 不会给已存在的表补列，
+        升级时必须显式 ALTER，否则写入会以 "no such column" 失败。
+        """
+        migrations = {
+            "courses": [
+                ("course_code", "TEXT NOT NULL DEFAULT ''"),
+            ],
+        }
+        for table, columns in migrations.items():
+            existing = {
+                row["name"]
+                for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if not existing:
+                continue
+            for name, definition in columns:
+                if name not in existing:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
     def close(self) -> None:
         self._conn.close()
