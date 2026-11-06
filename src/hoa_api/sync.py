@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import io
 import tarfile
-import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -366,7 +365,7 @@ class SyncPipeline:
         for course_code, mapping in data.items():
             if not isinstance(mapping, dict):
                 continue
-            for plan_id, repo_id in mapping.items():
+            for _plan_id, repo_id in mapping.items():
                 if isinstance(repo_id, str) and repo_id:
                     alias_map.setdefault(repo_id.upper(), set()).add(course_code.upper())
 

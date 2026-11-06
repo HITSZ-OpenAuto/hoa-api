@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import time
 from collections import defaultdict, deque
 from typing import Any

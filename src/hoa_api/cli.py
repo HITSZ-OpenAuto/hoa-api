@@ -7,6 +7,7 @@ import json
 import logging
 import threading
 import time
+from datetime import datetime
 from typing import Any
 
 from .config import get_config
@@ -52,11 +53,23 @@ def _start_scheduler(config: Any) -> None:
         while True:
             try:
                 store = Store(config.db_path)
-                pipeline = SyncPipeline(store, config)
-                report = pipeline.run()
-                store.set_meta("data_commit", str(report.as_dict()))
-                logger.info("定时同步完成: %s", report.as_dict())
-                pipeline.close()
+                # 数据还新鲜就不重复拉取
+                last = store.get_meta("last_sync_at")
+                fresh = False
+                if last:
+                    try:
+                        elapsed = time.time() - datetime.fromisoformat(last).timestamp()
+                        fresh = elapsed < config.sync_interval_sec
+                    except ValueError:
+                        fresh = False
+                if fresh:
+                    logger.info("数据仍在有效期内（%s），跳过本次同步", last)
+                else:
+                    pipeline = SyncPipeline(store, config)
+                    report = pipeline.run()
+                    store.set_meta("data_commit", str(report.as_dict()))
+                    logger.info("定时同步完成: %s", report.as_dict())
+                    pipeline.close()
                 store.close()
             except Exception:
                 logger.exception("定时同步失败")
