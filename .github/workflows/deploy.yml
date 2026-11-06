@@ -2,6 +2,14 @@ name: Deploy HOA API
 
 # 可复用工作流：由 HITSZ-OpenAuto/hoa-fuma 的部署流程调用，
 # 复用该仓库的 VPS / Tailscale / Cloudflare 凭据把 hoa-api 部署到官方 VPS。
+#
+# 官方 VPS 的反向代理拓扑（已实测确认，勿凭猜测改动）：
+#   - Traefik v3 仅启用 file provider：--providers.file.directory=/etc/traefik/dynamic
+#     宿主目录 /home/kowyo/traefik-compose/dynamic，容器内只读挂载
+#   - 没有 docker provider，因此容器标签不产生任何路由；路由必须写成 dynamic/*.yml
+#   - 证书由 Let's Encrypt 签发，resolver 名 "le"，HTTP-01 challenge 走 80 端口
+#   - Traefik 与业务容器同在 "proxy" 网络，服务地址可直接写容器名
+#   - hoa.moe 本身走 Cloudflare Tunnel（cloudflared → localhost:19800），不经 Traefik
 on:
   workflow_call:
     inputs:
@@ -23,15 +31,20 @@ on:
         required: true
         type: string
       api_domain:
-        description: 对外域名
+        description: 对外域名（主域名）
         required: false
         type: string
         default: api.hoa.moe
-      origin_domain:
-        description: 用于推导源站 IP 的站点域名
+      additional_domains:
+        description: 额外对外域名，逗号分隔
         required: false
         type: string
-        default: hoa.moe
+        default: ""
+      origin_ip:
+        description: 源站公网 IP；留空则自动从 Tailscale 邻居推导
+        required: false
+        type: string
+        default: ""
       container_name:
         required: false
         type: string
@@ -41,6 +54,21 @@ on:
         required: false
         type: string
         default: HITSZ-OpenAuto/hoa-api
+      traefik_dynamic_dir:
+        description: Traefik file provider 的动态配置目录（宿主机路径）
+        required: false
+        type: string
+        default: /home/kowyo/traefik-compose/dynamic
+      traefik_network:
+        description: Traefik 与业务容器共处的 Docker 网络
+        required: false
+        type: string
+        default: proxy
+      traefik_cert_resolver:
+        description: Traefik 证书解析器名
+        required: false
+        type: string
+        default: le
   workflow_dispatch:
     inputs:
       vps_host:
@@ -62,10 +90,14 @@ on:
         required: false
         type: string
         default: api.hoa.moe
-      origin_domain:
+      additional_domains:
         required: false
         type: string
-        default: hoa.moe
+        default: ""
+      origin_ip:
+        required: false
+        type: string
+        default: ""
       container_name:
         required: false
         type: string
@@ -74,6 +106,18 @@ on:
         required: false
         type: string
         default: HITSZ-OpenAuto/hoa-api
+      traefik_dynamic_dir:
+        required: false
+        type: string
+        default: /home/kowyo/traefik-compose/dynamic
+      traefik_network:
+        required: false
+        type: string
+        default: proxy
+      traefik_cert_resolver:
+        required: false
+        type: string
+        default: le
 
 permissions:
   contents: read
@@ -124,7 +168,7 @@ jobs:
     name: 探测 VPS 环境
     runs-on: ubuntu-latest
     outputs:
-      origin_ip: ${{ steps.probe.outputs.origin_ip }}
+      origin_ip: ${{ steps.origin.outputs.ip }}
     steps:
       - name: 加入组织 Tailscale 网络
         uses: tailscale/github-action@v4.1.3
@@ -133,8 +177,38 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
-      - name: 读取源站 IP 与容器信息
-        id: probe
+      # 源站公网 IP 在 runner 本地推导：Tailscale 邻居的 Endpoints 里带公网地址。
+      # 这样完全不需要从远端脚本回传 GITHUB_OUTPUT（远端是 zsh，没有该变量）。
+      - name: 推导源站公网 IP
+        id: origin
+        env:
+          TARGET_HOST: ${{ inputs.vps_host }}
+          FALLBACK_IP: ${{ inputs.origin_ip }}
+        run: |
+          set -uo pipefail
+          ip="$(tailscale status --json 2>/dev/null | python3 -c '
+          import json, os, sys
+          target = os.environ.get("TARGET_HOST", "")
+          try:
+              data = json.load(sys.stdin)
+          except Exception:
+              print(""); raise SystemExit
+          for peer in (data.get("Peer") or {}).values():
+              if target and target not in (peer.get("TailscaleIPs") or []):
+                  continue
+              for ep in peer.get("Endpoints") or []:
+                  host = ep.rsplit(":", 1)[0]
+                  if host and not host.startswith("["):
+                      print(host); raise SystemExit
+          ' || true)"
+          if [ -z "${ip}" ]; then
+            ip="${FALLBACK_IP}"
+            echo "未能从 Tailscale 推导源站 IP，回退到 workflow 输入"
+          fi
+          echo "源站公网 IP: ${ip:-<未获取>}"
+          echo "ip=${ip}" >> "$GITHUB_OUTPUT"
+
+      - name: 校验 VPS 连通性与代理拓扑
         uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ inputs.vps_host }}
@@ -142,15 +216,24 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           passphrase: ${{ secrets.PASSPHRASE }}
           port: ${{ inputs.vps_port }}
+          # 远端默认 shell 是 zsh，这里显式切到 bash，避免 zsh 的空数组/glob 差异
           script: |
-            set -euo pipefail
-            echo "容器列表:"
-            docker ps --format '  {{.Names}}  {{.Status}}'
-            echo "网络列表:"
-            docker network ls --format '  {{.Name}}'
-            ORIGIN_IP="$(curl -fsS --max-time 10 https://api.ipify.org || true)"
-            echo "源站公网 IP: ${ORIGIN_IP}"
-            echo "origin_ip=${ORIGIN_IP}" >> "$GITHUB_OUTPUT"
+            bash <<'BASH_EOF'
+            set -eo pipefail
+            echo "--- 容器 ---"
+            docker ps --format '  {{.Names}}  {{.Status}}  {{.Ports}}'
+            echo "--- Traefik 动态配置目录 ---"
+            ls -la "${{ inputs.traefik_dynamic_dir }}"
+            echo "--- Traefik 路由文件 ---"
+            for f in "${{ inputs.traefik_dynamic_dir }}"/*; do
+              [ -f "$f" ] || continue
+              echo "  >>> $f"
+              cat "$f"
+            done
+            echo "--- 磁盘与内存 ---"
+            df -h / | tail -1
+            free -m | head -2
+            BASH_EOF
 
   dns:
     name: 配置 Cloudflare DNS
@@ -209,7 +292,26 @@ jobs:
           else:
               errs = d.get("errors") or []
               print("::notice::Cloudflare 无 DNS 权限或写入失败:", errs)
+              print("::notice::请在 Cloudflare 控制台手工添加 A 记录：")
+              print("::notice::  名称 ${API_DOMAIN} → ${ORIGIN_IP}，开启代理（橙云）")
           '
+
+      # 组织 token 具备清缓存权限（但无 DNS 编辑权限），这里顺手清掉旧 404 缓存
+      - name: 清理 Cloudflare 缓存
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ZONE_ID: ${{ inputs.cloudflare_zone_id }}
+        run: |
+          set -uo pipefail
+          if [ -z "${CF_TOKEN}" ]; then
+            exit 0
+          fi
+          code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST \
+            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/purge_cache" \
+            -H "Authorization: Bearer ${CF_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"purge_everything":true}' || true)"
+          echo "  Cloudflare 清缓存 → HTTP ${code}"
 
   deploy:
     name: 部署到官方 VPS
@@ -228,68 +330,32 @@ jobs:
         env:
           GHCR_TOKEN: ${{ github.token }}
           GITHUB_TOKEN_FOR_SYNC: ${{ secrets.FUMA_GITHUB_API_TOKEN }}
+          IMAGE_TAGS: ${{ needs.build.outputs.image_ref }}
+          CONTAINER: ${{ inputs.container_name }}
+          API_DOMAIN: ${{ inputs.api_domain }}
+          ADDITIONAL_DOMAINS: ${{ inputs.additional_domains }}
+          APP_PORT: ${{ inputs.vps_app_port }}
+          TRAEFIK_DIR: ${{ inputs.traefik_dynamic_dir }}
+          TRAEFIK_NET: ${{ inputs.traefik_network }}
+          CERT_RESOLVER: ${{ inputs.traefik_cert_resolver }}
         with:
           host: ${{ inputs.vps_host }}
           username: ${{ inputs.vps_user }}
           key: ${{ secrets.VPS_SSH_KEY }}
           passphrase: ${{ secrets.PASSPHRASE }}
           port: ${{ inputs.vps_port }}
-          envs: GHCR_TOKEN,GITHUB_TOKEN_FOR_SYNC
+          envs: GHCR_TOKEN,GITHUB_TOKEN_FOR_SYNC,IMAGE_TAGS,CONTAINER,API_DOMAIN,ADDITIONAL_DOMAINS,APP_PORT,TRAEFIK_DIR,TRAEFIK_NET,CERT_RESOLVER
           script: |
-            set -euo pipefail
-            image_ref='${{ needs.build.outputs.image_ref }}'
-            container='${{ inputs.container_name }}'
-            domain='${{ inputs.api_domain }}'
-            app_port='${{ inputs.vps_app_port }}'
+            bash <<'BASH_EOF'
+            set -eo pipefail
 
-            # 以正在运行的 hoa-fuma 容器为模板，复制它的 Traefik 标签与网络，
-            # 保证与站点使用同一套入口、证书解析器与路由配置
-            TEMPLATE_CONTAINER='hoa-fuma'
-            if ! docker inspect "${TEMPLATE_CONTAINER}" >/dev/null 2>&1; then
-              echo "::error::找不到模板容器 ${TEMPLATE_CONTAINER}"
-              exit 1
-            fi
+            # metadata-action 会输出多个标签（latest,build-N-M），取第一个即可
+            image_ref="${IMAGE_TAGS%%,*}"
+            container="${CONTAINER}"
+            app_port="${APP_PORT}"
+            net="${TRAEFIK_NET}"
 
-            NETWORKS="$(docker inspect "${TEMPLATE_CONTAINER}" \
-              --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}')"
-            echo "模板容器所在网络: ${NETWORKS}"
-            FIRST_NET="$(echo "${NETWORKS}" | awk '{print $1}')"
-            if [ -z "${FIRST_NET}" ]; then
-              echo "::error::无法确定容器网络"
-              exit 1
-            fi
-
-            echo "=== 生成 Traefik 标签 ==="
-            docker inspect "${TEMPLATE_CONTAINER}" --format '{{json .Config.Labels}}' > /tmp/labels.json
-            python3 - "$container" "$domain" <<'PYEOF' > /tmp/labels.env
-            import json, re, sys
-
-            container, domain = sys.argv[1], sys.argv[2]
-            labels = json.load(open("/tmp/labels.json"))
-            traefik = {k: v for k, v in labels.items() if k.startswith("traefik.")}
-
-            def rename(key: str) -> str:
-                return re.sub(
-                    r"(traefik\.http\.(?:routers|services|middlewares)\.)[^.]+(\.)",
-                    rf"\g<1>{container}\g<2>",
-                    key,
-                )
-
-            renamed = {rename(k): v for k, v in traefik.items()}
-
-            for key in list(renamed):
-                if key.endswith(".rule"):
-                    renamed[key] = f"Host(`{domain}`)"
-
-            renamed[f"traefik.http.services.{container}.loadbalancer.server.port"] = "8099"
-            renamed["traefik.enable"] = "true"
-
-            for key, value in sorted(renamed.items()):
-                safe = str(value).replace("'", "'\"'\"'")
-                print(f"LABEL {key}='{safe}'")
-            PYEOF
-
-            echo "=== 拉取镜像 ==="
+            echo "=== 拉取镜像 ${image_ref} ==="
             echo "${GHCR_TOKEN}" | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
             docker pull "${image_ref}"
 
@@ -297,15 +363,19 @@ jobs:
             docker volume create hoa-api-data >/dev/null
             docker rm -f "${container}" 2>/dev/null || true
 
-            LABEL_ARGS=()
-            while IFS= read -r line; do
-              [ -n "${line}" ] && LABEL_ARGS+=("${line#LABEL }")
-            done < /tmp/labels.env
-            printf '  标签数: %s\n' "${#LABEL_ARGS[@]}"
+            # 允许的对外域名：主域名 + 额外域名
+            domains="${API_DOMAIN}"
+            if [ -n "${ADDITIONAL_DOMAINS}" ]; then
+              domains="${domains},${ADDITIONAL_DOMAINS}"
+            fi
+
+            # 域名白名单同步给 MCP 层（防 DNS 重绑定）
+            host_allow="$(echo "${domains}" | tr ',' '\n' | sed '/^$/d' | paste -sd, -)"
+            host_allow="localhost,127.0.0.1,[::1],${host_allow}"
 
             docker run -d \
               --name "${container}" \
-              --network "${FIRST_NET}" \
+              --network "${net}" \
               --restart unless-stopped \
               -p "${app_port}:8099" \
               -v hoa-api-data:/app/data \
@@ -314,39 +384,119 @@ jobs:
               -e HOA_SITE_ORIGIN=https://hoa.moe \
               -e HOA_SYNC_INTERVAL_SEC=21600 \
               -e HOA_RATE_LIMIT_PER_MIN=120 \
-              -e HOA_MCP_ALLOWED_HOSTS="localhost,127.0.0.1,[::1],${domain}" \
-              "${LABEL_ARGS[@]}" \
+              -e HOA_MCP_ALLOWED_HOSTS="${host_allow}" \
               "${image_ref}"
 
-            echo "=== 健康检查 ==="
+            echo "=== 容器健康检查 ==="
+            healthy=0
             for _ in $(seq 1 30); do
-              if docker exec "${container}" python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8099/api/v1/meta', timeout=4).status==200 else 1)"; then
-                echo "  容器健康"
+              if docker exec "${container}" python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8099/api/v1/meta', timeout=4).status==200 else 1)" 2>/dev/null; then
+                healthy=1
                 break
               fi
               sleep 2
             done
+            if [ "${healthy}" != "1" ]; then
+              echo "::error::容器未在预期时间内就绪"
+              docker logs --tail 50 "${container}" >&2 || true
+              exit 1
+            fi
+            echo "  容器健康"
+
+            echo "=== 写入 Traefik 路由（file provider）==="
+            if [ ! -d "${TRAEFIK_DIR}" ]; then
+              echo "::error::Traefik 动态配置目录不存在: ${TRAEFIK_DIR}"
+              exit 1
+            fi
+            DOMAINS="${domains}" \
+            CONTAINER_NAME="${container}" \
+            CERT_RESOLVER="${CERT_RESOLVER}" \
+            python3 - <<'PYEOF' > /tmp/hoa-api-route.yml
+            import os
+
+            domains = [d.strip() for d in os.environ.get("DOMAINS", "").split(",") if d.strip()]
+            container = os.environ.get("CONTAINER_NAME", "hoa-api")
+            resolver = os.environ.get("CERT_RESOLVER", "le")
+
+            # 每个域名一个独立 router：某个域名签不出证书时不影响其它域名
+            print("http:")
+            print("  routers:")
+            for domain in domains:
+                slug = domain.replace(".", "-")
+                print("    hoa-api-%s:" % slug)
+                print('      rule: "Host(`%s`)"' % domain)
+                print("      entryPoints:")
+                print('        - "websecure"')
+                print('        - "web"')
+                print("      service: hoa-api-svc-%s" % slug)
+                print("      tls:")
+                print("        certResolver: %s" % resolver)
+            print("  services:")
+            for domain in domains:
+                slug = domain.replace(".", "-")
+                print("    hoa-api-svc-%s:" % slug)
+                print("      loadBalancer:")
+                print("        servers:")
+                print('          - url: "http://%s:8099"' % container)
+            PYEOF
+
+            echo "--- 生成的路由文件 ---"
+            cat /tmp/hoa-api-route.yml
+            # 原子替换，避免 Traefik 读到写了一半的文件
+            cp /tmp/hoa-api-route.yml "${TRAEFIK_DIR}/.hoa-api.yml.tmp"
+            mv "${TRAEFIK_DIR}/.hoa-api.yml.tmp" "${TRAEFIK_DIR}/hoa-api.yml"
+
+            echo "=== 校验路由已在 Traefik 中生效 ==="
+            sleep 3
+            for d in $(echo "${domains}" | tr ',' ' '); do
+              code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 \
+                -H "Host: ${d}" http://127.0.0.1:80/api/v1/meta || true)"
+              echo "  Host: ${d} → HTTP ${code}"
+            done
+
             docker ps --filter "name=${container}" --format '  {{.Names}} {{.Status}} {{.Ports}}'
-            docker logs --tail 30 "${container}" 2>&1 | sed 's/^/  /' || true
+            BASH_EOF
 
   verify:
     name: 外网验证
     needs: [deploy, dns]
     runs-on: ubuntu-latest
     steps:
-      - name: 轮询公开地址
+      - name: 加入组织 Tailscale 网络
+        uses: tailscale/github-action@v4.1.3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      # 经 Tailscale 直连源站，不依赖 DNS，可验证「容器 + Traefik 路由」是否真正打通
+      - name: 经 Tailscale 校验源站
+        env:
+          VPS_HOST: ${{ inputs.vps_host }}
+          DOMAIN: ${{ inputs.api_domain }}
+        run: |
+          set -uo pipefail
+          code="$(curl -s -o /tmp/meta.json -w '%{http_code}' --max-time 15 \
+            -H "Host: ${DOMAIN}" "http://${VPS_HOST}/api/v1/meta" || true)"
+          echo "  http://${VPS_HOST} (Host: ${DOMAIN}) → HTTP ${code}"
+          if [ "${code}" != "200" ]; then
+            echo "::error::源站校验失败，期望 200，实际 ${code}"
+            cat /tmp/meta.json 2>/dev/null | head -c 500 || true
+            exit 1
+          fi
+          cat /tmp/meta.json | head -c 600
+          echo
+
+      # 公网域名：DNS 尚未添加时允许失败，仅提示
+      - name: 校验公开域名
         env:
           DOMAIN: ${{ inputs.api_domain }}
         run: |
           set -uo pipefail
-          for i in $(seq 1 24); do
-            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://${DOMAIN}/api/v1/meta" || true)"
-            echo "  第 ${i} 次: HTTP ${code}"
-            if [ "${code}" = "200" ]; then
-              echo "::notice::公开地址已就绪 https://${DOMAIN}/api/v1"
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "::error::公开地址未在预期时间内就绪；若 DNS 记录尚未添加，请在 Cloudflare 添加后重跑本工作流"
-          exit 1
+          code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://${DOMAIN}/api/v1/meta" || true)"
+          echo "  https://${DOMAIN}/api/v1/meta → HTTP ${code}"
+          if [ "${code}" != "200" ]; then
+            echo "::notice::公开域名尚未就绪（HTTP ${code}）。若 DNS 记录尚未添加，"
+            echo "::notice::请在 Cloudflare 添加 A 记录 ${DOMAIN} → 源站 IP，并开启代理；"
+            echo "::notice::添加后 Traefik 会自动签发证书，重跑本工作流即可验证。"
+          fi
