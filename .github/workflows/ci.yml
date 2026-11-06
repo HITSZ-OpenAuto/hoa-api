@@ -42,3 +42,34 @@ jobs:
             git diff -- docs/openapi.yaml
             exit 1
           fi
+
+  image:
+    name: 构建镜像
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v4.2.0
+
+      - name: 构建镜像
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: hoa-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 冒烟测试
+        run: |
+          docker run -d --name hoa-api-ci -p 18099:8099 hoa-api:ci
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18099/api/v1/meta > /tmp/meta.json; then
+              echo "meta: $(cat /tmp/meta.json)"
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:18099/api/v1/meta > /dev/null
+          docker rm -f hoa-api-ci
