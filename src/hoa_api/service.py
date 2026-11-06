@@ -38,20 +38,28 @@ class Service:
     ) -> list[dict[str, Any]]:
         """课程检索。
 
-        三级回落，与老 course-server 的检索层级保持一致：
+        与老 course-server 的检索层级对齐，并保证结果是它的超集：
         1. 直接匹配课程代码 / 名称 / 别名 / 教师 / 描述；
-        2. 直接匹配不到时，用昵称表把「高数」之类的口语还原成官方课程名再匹配；
-        3. 仍然匹配不到时，回落到课程正文（老实现的 GitHub code search 兜底）。
+        2. 再用昵称表把「高数」之类的口语还原成官方课程名补充匹配，
+           结果合并（直接命中优先），因此不会因为直接命中了描述里的关键词
+           而漏掉官方名对应的课程；
+        3. 直接与昵称都没命中时，回落到课程正文（老实现的 GitHub code search 兜底）。
         """
         results = self.store.search_courses(keyword=q, teacher=teacher, limit=limit)
-        if not results and q:
+        if q:
             official = resolve_nickname(q)
             if official != q:
-                results = self.store.search_courses(
+                alias_hits = self.store.search_courses(
                     keyword=official, teacher=teacher, limit=limit
                 )
+                if alias_hits:
+                    seen = {item["code"] for item in results}
+                    results = results + [
+                        item for item in alias_hits if item["code"] not in seen
+                    ]
         if not results and q:
             results = self.store.search_content_courses(q, limit=limit)
+        results = results[:limit]
         for item in results:
             item["site_url"] = self.site_url(item["code"])
         return results
