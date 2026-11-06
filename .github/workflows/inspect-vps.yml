@@ -93,26 +93,40 @@ jobs:
             docker inspect hoa-fuma --format 'Ports: {{json .HostConfig.PortBindings}}' 2>&1
             docker inspect hoa-fuma --format 'Mounts: {{json .Mounts}}' 2>&1
 
-            echo "############ 5. compose 文件 ############"
-            sudo -n find / -maxdepth 5 \( -name 'docker-compose*.y*ml' -o -name 'compose*.y*ml' \) -not -path '/proc/*' 2>/dev/null | head -20
+            echo "############ 5. /home/kowyo 目录结构 ############"
+            ls -la /home/kowyo 2>&1 | head -40
+            echo "--- traefik-compose ---"
+            ls -la /home/kowyo/traefik-compose 2>&1 | head -40
 
-            echo "############ 6. Traefik 挂载目录内容 ############"
-            if [ -n "${TR}" ]; then
-              for src in $(docker inspect "$TR" --format '{{range .Mounts}}{{.Source}} {{end}}' 2>/dev/null); do
-                echo "--- 目录 ${src} ---"
-                sudo -n ls -la "$src" 2>&1 | head -40
-                for f in $(sudo -n find "$src" -maxdepth 2 -type f \( -name '*.yml' -o -name '*.yaml' -o -name '*.toml' \) 2>/dev/null | head -10); do
-                  echo ">>> 文件 ${f}"
-                  sudo -n cat "$f" 2>&1 | head -120
-                done
-              done
-            fi
+            echo "############ 6. Traefik 动态路由文件（核心）############"
+            echo "--- dynamic 目录列表 ---"
+            ls -la /home/kowyo/traefik-compose/dynamic 2>&1 | head -40
+            for f in /home/kowyo/traefik-compose/dynamic/*; do
+              [ -f "$f" ] || continue
+              echo ">>> 文件 ${f}"
+              cat "$f" 2>&1 | head -150 || true
+            done
+
+            echo "############ 6b. compose.yaml ############"
+            cat /home/kowyo/traefik-compose/compose.yaml 2>&1 | head -150 || true
+
+            echo "############ 6c. acme.json 中的证书域名 ############"
+            python3 - <<'PYEOF' 2>&1 | head -40 || true
+            import json
+            try:
+                d = json.load(open("/home/kowyo/traefik-compose/letsencrypt/acme.json"))
+            except Exception as e:
+                print("无法读取 acme.json:", e); raise SystemExit
+            for resolver, certs in (d.get("Certificates") or {}).items():
+                for c in certs:
+                    print(resolver, "|", c.get("domain", {}).get("main"))
+            PYEOF
 
             echo "############ 7. 监听端口 ############"
-            (sudo -n ss -tlnp 2>&1 || ss -tlnp 2>&1) | head -40
+            (sudo -n ss -tlnp 2>&1 || ss -tlnp 2>&1) | head -40 || true
 
             echo "############ 8. 运行中的服务 ############"
-            systemctl list-units --type=service --state=running --no-pager 2>&1 | head -30
+            systemctl list-units --type=service --state=running --no-pager 2>&1 | head -30 || true
 
             echo "############ 9. Traefik 路由 API（若开放）############"
             for p in 8080 8081 9090; do
