@@ -280,21 +280,20 @@ jobs:
             RESP="$(api -X PUT "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${EXISTING}" \
               -d "{\"type\":\"A\",\"name\":\"${API_DOMAIN}\",\"content\":\"${ORIGIN_IP}\",\"proxied\":true,\"ttl\":1}")"
           fi
-          echo "${RESP}" | python3 -c '
+          OK="$(echo "${RESP}" | python3 -c '
           import json,sys
-          raw = sys.stdin.read()
           try:
-              d = json.loads(raw)
+              print("1" if json.loads(sys.stdin.read()).get("success") else "0")
           except Exception:
-              print("::notice::Cloudflare 响应无法解析:", raw[:300]); raise SystemExit
-          if d.get("success"):
-              print("::notice::DNS 记录写入成功")
-          else:
-              errs = d.get("errors") or []
-              print("::notice::Cloudflare 无 DNS 权限或写入失败:", errs)
-              print("::notice::请在 Cloudflare 控制台手工添加 A 记录：")
-              print("::notice::  名称 ${API_DOMAIN} → ${ORIGIN_IP}，开启代理（橙云）")
-          '
+              print("0")
+          ')"
+          if [ "${OK}" = "1" ]; then
+            echo "::notice::DNS 记录写入成功"
+          else
+            echo "::notice::Cloudflare 无 DNS 权限或写入失败，请手工添加 A 记录："
+            echo "::notice::  名称 ${API_DOMAIN} → ${ORIGIN_IP}，开启代理（橙云）"
+            echo "::notice::添加后 Traefik 会自动签发 Let's Encrypt 证书，重跑本工作流即可验证。"
+          fi
 
       # 组织 token 具备清缓存权限（但无 DNS 编辑权限），这里顺手清掉旧 404 缓存
       - name: 清理 Cloudflare 缓存
