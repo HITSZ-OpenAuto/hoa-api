@@ -46,7 +46,16 @@ class RateLimiter:
             retry_after = int(60 - (now - window[0])) + 1
             return False, max(1, retry_after)
         window.append(now)
+        self._evict(now)
         return True, 0
+
+    def _evict(self, now: float) -> None:
+        """清理长期不活跃的 IP，避免字典无限增长。"""
+        if len(self._hits) < 1024:
+            return
+        stale = [key for key, window in self._hits.items() if not window or now - window[-1] > 600]
+        for key in stale:
+            self._hits.pop(key, None)
 
 
 # --------------------------------------------------------------------------
@@ -124,7 +133,10 @@ def create_app(config: Config | None = None, store: Store | None = None) -> Fast
 
         response = await call_next(request)
 
-        if request.method == "GET" and response.status_code == 200:
+        # MCP 端点不走 ETag 处理：其响应可能是 SSE 流，缓冲会破坏流式语义
+        is_mcp = request.url.path.rstrip("/") == config.mcp_path.rstrip("/")
+
+        if request.method == "GET" and response.status_code == 200 and not is_mcp:
             body = b""
             async for chunk in response.body_iterator:
                 body += chunk
