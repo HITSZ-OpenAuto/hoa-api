@@ -81,7 +81,18 @@ gh run view <RUN_ID> -R HITSZ-OpenAuto/hoa-fuma \
    服务地址用容器名 `hoa-api`，由 Docker 内嵌 DNS 在 `proxy` 网络内解析。
 6. **验证**：经 Tailscale 直连源站（`curl -H "Host: api.hoa.moe" http://100.113.37.19/api/v1/meta`）与 MCP `tools/list`，两者都必须是 200；再尝试公网域名。
 
-### A4. DNS 记录
+### A4. 基础设施与域名归属
+
+| 资源 | 归属 | 说明 |
+| --- | --- | --- |
+| 官方 VPS `77.42.21.198` | Hetzner（AS24940 德国 Helsinki），SSH 账号 `kowyo` | 由 kowyo（Huang Zifeng）持有，同时跑着 hoa.moe 官网源站与若干个人服务 |
+| 组织部署链路 | `HITSZ-OpenAuto/hoa-fuma` 仓库 secret / variable | `VPS_SSH_KEY`、`PASSPHRASE`、`TS_*`、`CLOUDFLARE_API_TOKEN`；组织 CI 每日驱动部署 |
+| Cloudflare zone `hoa.moe` | 账号显示名 `Kowyo`，zone id `a20affd8010b4a9d4a9de9b38b67057d` | 与 Tunnel `5b2e44ac-af58-418a-9756-ffe7383b21ff` 同一账号；域名的 DNS 编辑权不在组织 token 手里 |
+| `hoa-api.limpu.cn` | 自有域名（注册人本人） | 可自行添加 A 记录 |
+
+代码、凭据与部署流程已归组织；承载官网与 API 的物理机器与主域名仍是个人账号资产。
+
+### A5. DNS 记录
 
 需要在 Cloudflare 添加：
 
@@ -105,7 +116,7 @@ additional_domains: hoa-api.limpu.cn,77.42.21.198.sslip.io
 实测该域名的证书为 `issuer: C=US; O=Let's Encrypt; CN=YR1`，全部 REST 与 MCP 接口返回 200。
 官方 A 记录加好后，从 `additional_domains` 里移除这个临时域名即可。
 
-### A5. 验证
+### A6. 验证
 
 ```bash
 # 源站（不依赖 DNS）
