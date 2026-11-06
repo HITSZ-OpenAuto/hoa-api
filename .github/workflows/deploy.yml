@@ -208,14 +208,19 @@ jobs:
           echo "源站公网 IP: ${ip:-<未获取>}"
           echo "ip=${ip}" >> "$GITHUB_OUTPUT"
 
+      # 校验 VPS 连通性与代理拓扑
       - name: 校验 VPS 连通性与代理拓扑
         uses: appleboy/ssh-action@v1.2.5
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ZONE_ID: ${{ inputs.cloudflare_zone_id }}
         with:
           host: ${{ inputs.vps_host }}
           username: ${{ inputs.vps_user }}
           key: ${{ secrets.VPS_SSH_KEY }}
           passphrase: ${{ secrets.PASSPHRASE }}
           port: ${{ inputs.vps_port }}
+          envs: CF_TOKEN,ZONE_ID
           # 远端默认 shell 是 zsh，这里显式切到 bash，避免 zsh 的空数组/glob 差异
           script: |
             bash <<'BASH_EOF'
@@ -233,6 +238,41 @@ jobs:
             echo "--- 磁盘与内存 ---"
             df -h / | tail -1
             free -m | head -2
+            echo "--- 归属信息 ---"
+            echo "  公网 IP: $(curl -fsS --max-time 8 https://api.ipify.org || echo '未知')"
+            for cred in "$HOME"/.cloudflared/*.json; do
+              [ -f "$cred" ] || continue
+              echo "  Cloudflare Tunnel 凭据 $(basename "$cred"):"
+              python3 - "$cred" <<'PYEOF'
+            import json, sys
+            try:
+                d = json.load(open(sys.argv[1]))
+            except Exception as exc:
+                print("    无法读取:", exc); raise SystemExit
+            for key in ("AccountTag", "TunnelID", "TunnelName"):
+                if key in d:
+                    print("   ", key, "=", d[key])
+            PYEOF
+            done
+            if [ -n "${CF_TOKEN:-}" ] && [ -n "${ZONE_ID:-}" ]; then
+              echo "  Cloudflare zone 归属:"
+              curl -sS --max-time 12 -H "Authorization: Bearer ${CF_TOKEN}" \
+                "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}" | python3 -c '
+            import json, sys
+            try:
+                d = json.load(sys.stdin)
+            except Exception as exc:
+                print("    无法解析响应:", exc); raise SystemExit
+            if not d.get("success"):
+                print("    查询失败:", d.get("errors")); raise SystemExit
+            result = d.get("result") or {}
+            account = result.get("account") or {}
+            print("     zone   =", result.get("name"))
+            print("     status =", result.get("status"))
+            print("     account_id =", account.get("id"))
+            print("     account_name =", account.get("name"))
+            '
+            fi
             BASH_EOF
 
   dns:
