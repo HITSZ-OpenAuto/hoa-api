@@ -33,6 +33,11 @@ class Config:
     site_origin: str = os.getenv("HOA_SITE_ORIGIN", "https://hoa.moe")
     api_base_path: str = os.getenv("HOA_API_BASE_PATH", "/api/v1")
     mcp_path: str = os.getenv("HOA_MCP_PATH", "/mcp")
+    mcp_allowed_hosts: str = os.getenv(
+        "HOA_MCP_ALLOWED_HOSTS",
+        "localhost,127.0.0.1,[::1],api.hoa.moe,api.hita.limpu.cn",
+    )
+    mcp_allowed_origins: str = os.getenv("HOA_MCP_ALLOWED_ORIGINS", "")
 
     # 存储
     db_path: str = os.getenv("HOA_DB_PATH", "data/hoa.db")
@@ -60,6 +65,14 @@ class Config:
         if raw == "*":
             return ["*"]
         return [item.strip() for item in raw.split(",") if item.strip()]
+
+    @property
+    def mcp_allowed_host_list(self) -> list[str]:
+        return [item.strip() for item in self.mcp_allowed_hosts.split(",") if item.strip()]
+
+    @property
+    def mcp_allowed_origin_list(self) -> list[str]:
+        return [item.strip() for item in self.mcp_allowed_origins.split(",") if item.strip()]
 
     @property
     def public_base_url(self) -> str:

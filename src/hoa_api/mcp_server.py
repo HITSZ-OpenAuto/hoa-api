@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .config import Config
 from .service import Service
@@ -199,10 +200,16 @@ def mount_mcp(app: Any, service: Service, config: Config) -> MCPServer:
     因此这里显式接管 FastAPI 的 lifespan，串起 MCP 应用的启动与关闭。
     """
     mcp = build_mcp(service, config)
+    security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=config.mcp_allowed_host_list,
+        allowed_origins=config.mcp_allowed_origin_list,
+    )
     mcp_app = mcp.streamable_http_app(
         streamable_http_path=config.mcp_path or "/mcp",
         json_response=True,
         stateless_http=True,
+        transport_security=security,
     )
 
     @asynccontextmanager
