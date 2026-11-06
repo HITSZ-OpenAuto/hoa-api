@@ -311,7 +311,7 @@ class Store:
         if row is None:
             return None
         course = self._row_to_course(row)
-        course["site_url"] = f"https://hoa.moe/docs/search?q={row['code']}"
+        course["site_url"] = None
         return course
 
     def get_course_by_repo(self, repo: str) -> dict[str, Any] | None:

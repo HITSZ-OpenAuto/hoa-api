@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import urllib.parse
 from typing import Any
 
 from .config import Config
@@ -141,7 +142,8 @@ class Service:
                     "type": "teacher",
                     "title": teacher["name"],
                     "description": "教师，涉及课程：" + "、".join(teacher["courses"][:8]),
-                    "url": f"{self.config.site_origin}/docs/search?q={teacher['name']}",
+                    # 站点检索是弹窗，没有可分享的搜索页；这里指向 GitHub 组织内检索
+                    "url": f"https://github.com/{self.config.org}?q={urllib.parse.quote(teacher['name'])}",
                     "score": 30,
                 }
             )
