@@ -28,7 +28,12 @@ class FetchResult:
 
 
 class GitHubClient:
-    """轻量 GitHub 客户端（只读）。"""
+    """轻量 GitHub 客户端（只读）。
+
+    部分中国大陆网络环境无法直连 ``raw.githubusercontent.com``（会超时），
+    因此这里提供两条内容获取通道：raw 与 Contents API，
+    由 :meth:`probe_raw` 探测后择优使用。
+    """
 
     def __init__(
         self,
@@ -51,6 +56,7 @@ class GitHubClient:
             timeout=timeout,
             follow_redirects=True,
         )
+        self._raw_ok: bool | None = None
 
     def close(self) -> None:
         self._client.close()
@@ -134,3 +140,50 @@ class GitHubClient:
 
     def api_url(self, path: str) -> str:
         return f"https://api.github.com{path}"
+
+    # ---------- 内容获取 ----------
+
+    def probe_raw(self, timeout: float = 8.0) -> bool:
+        """探测 raw.githubusercontent.com 是否可达，结果缓存。"""
+        if self._raw_ok is not None:
+            return self._raw_ok
+        try:
+            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+                response = client.get(
+                    "https://raw.githubusercontent.com/HITSZ-OpenAuto/hoa-fuma/main/README.md"
+                )
+            self._raw_ok = response.status_code == 200
+        except httpx.HTTPError:
+            self._raw_ok = False
+        return self._raw_ok
+
+    def get_file_text(
+        self, org: str, repo: str, ref: str, path: str, etag: str | None = None
+    ) -> FetchResult:
+        """取仓库内文件文本，自动在 raw / Contents API 之间选择可用通道。"""
+        if self.probe_raw():
+            return self.get_text(self.raw_url(org, repo, ref, path), etag)
+        return self.get_contents(org, repo, path, ref, etag)
+
+    def get_contents(
+        self, org: str, repo: str, path: str, ref: str, etag: str | None = None
+    ) -> FetchResult:
+        """通过 Contents API 取文件内容（base64 解码）。"""
+        import base64
+
+        url = self.api_url(f"/repos/{org}/{repo}/contents/{path}?ref={ref}")
+        result = self.get_json(url, etag)
+        if not result.ok or not isinstance(result.data, dict):
+            return result
+        payload = result.data
+        if payload.get("type") != "file" or "content" not in payload:
+            result.status = 404
+            return result
+        try:
+            raw = base64.b64decode(payload["content"].replace("\n", ""))
+            result.content = raw.decode("utf-8", "replace")
+        except (ValueError, TypeError) as exc:
+            result.status = 500
+            result.content = None
+            result.error = str(exc)  # type: ignore[attr-defined]
+        return result

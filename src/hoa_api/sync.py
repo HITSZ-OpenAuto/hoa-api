@@ -141,7 +141,9 @@ class SyncPipeline:
         return courses
 
     def _fetch_repo_list(self) -> list[str]:
-        result = self.client.get_text(REPO_LIST_URL)
+        result = self.client.get_file_text(
+            "HITSZ-OpenAuto", "repos-management", "main", "repos_list.txt"
+        )
         if not result.content:
             return []
         return [line.strip() for line in result.content.splitlines() if line.strip()]
@@ -178,11 +180,13 @@ class SyncPipeline:
         etag_tree = sync_row["etag_tree"] if sync_row else None
 
         branch = info.get("branch") or "main"
-        toml_url = self.client.raw_url(self.config.org, repo, branch, "readme.toml")
-        readme_url = self.client.raw_url(self.config.org, repo, branch, "README.md")
 
-        toml_res = self.client.get_text(toml_url, etag_toml)
-        readme_res = self.client.get_text(readme_url, etag_readme)
+        toml_res = self.client.get_file_text(
+            self.config.org, repo, branch, "readme.toml", etag_toml
+        )
+        readme_res = self.client.get_file_text(
+            self.config.org, repo, branch, "README.md", etag_readme
+        )
 
         tree_nodes: list[dict[str, Any]] = []
         tree_changed = False
@@ -310,49 +314,103 @@ class SyncPipeline:
 
     def _sync_major_data(self, report: SyncReport) -> None:
         """一次性同步 grades / lookup_table / plans。"""
+        if self._sync_major_data_tarball(report):
+            return
+        # tarball（codeload）不可达时，退回 Contents / Blob API
+        self._sync_major_data_api(report)
+
+    def _sync_major_data_tarball(self, report: SyncReport) -> bool:
         result = self.client.get_bytes(MAJOR_DATA_TARBALL)
         if not result.content_bytes:
-            raise RuntimeError("major-data tarball 下载失败")
+            return False
 
-        with tarfile.open(fileobj=io.BytesIO(result.content_bytes), mode="r:gz") as tar:
-            members = {member.name: member for member in tar.getmembers()}
+        try:
+            with tarfile.open(fileobj=io.BytesIO(result.content_bytes), mode="r:gz") as tar:
+                members = {member.name: member for member in tar.getmembers()}
 
-            grades_member = next(
-                (m for name, m in members.items() if name.endswith("/grades_summary.json")),
-                None,
-            )
-            if grades_member:
-                payload = tar.extractfile(grades_member).read().decode("utf-8", "ignore")
-                import json
+                grades_member = next(
+                    (m for name, m in members.items() if name.endswith("/grades_summary.json")),
+                    None,
+                )
+                if grades_member:
+                    payload = tar.extractfile(grades_member).read().decode("utf-8", "ignore")
+                    import json
 
-                grades = json.loads(payload)
-                for code, value in grades.items():
-                    self.store.upsert_grade(code, parse_grading_payload(value))
-                report.grades = len(grades)
+                    grades = json.loads(payload)
+                    for code, value in grades.items():
+                        self.store.upsert_grade(code, parse_grading_payload(value))
+                    report.grades = len(grades)
 
-            lookup_member = next(
-                (m for name, m in members.items() if name.endswith("/lookup_table.toml")),
-                None,
-            )
-            if lookup_member:
-                text = tar.extractfile(lookup_member).read().decode("utf-8", "ignore")
-                self._apply_lookup_table(text)
+                lookup_member = next(
+                    (m for name, m in members.items() if name.endswith("/lookup_table.toml")),
+                    None,
+                )
+                if lookup_member:
+                    text = tar.extractfile(lookup_member).read().decode("utf-8", "ignore")
+                    self._apply_lookup_table(text)
 
-            if self.config.sync_plans:
-                plan_members = [
-                    m
-                    for name, m in members.items()
-                    if "/plans/" in name and m.name.endswith(".toml")
-                ]
-                for member in plan_members:
-                    text = tar.extractfile(member).read().decode("utf-8", "ignore")
-                    plan = parse_plan_toml(text)
-                    if not plan["year"] or not plan["major"]:
-                        continue
-                    self.store.upsert_plan(
-                        plan["year"], plan["major"], plan["major_code"], plan
-                    )
-                report.plans = len(plan_members)
+                if self.config.sync_plans:
+                    plan_members = [
+                        m
+                        for name, m in members.items()
+                        if "/plans/" in name and m.name.endswith(".toml")
+                    ]
+                    for member in plan_members:
+                        text = tar.extractfile(member).read().decode("utf-8", "ignore")
+                        plan = parse_plan_toml(text)
+                        if not plan["year"] or not plan["major"]:
+                            continue
+                        self.store.upsert_plan(
+                            plan["year"], plan["major"], plan["major_code"], plan
+                        )
+                    report.plans = len(plan_members)
+            self.store.commit()
+            return True
+        except (tarfile.TarError, OSError):
+            return False
+
+    def _sync_major_data_api(self, report: SyncReport) -> None:
+        """用 Contents API 拉取 major-data（raw/codeload 不可达时的兜底）。"""
+        import json
+
+        org, repo = "HITSZ-OpenAuto", "hoa-major-data"
+
+        grades_res = self.client.get_contents(org, repo, "grades_summary.json", "main")
+        if grades_res.content:
+            grades = json.loads(grades_res.content)
+            for code, value in grades.items():
+                self.store.upsert_grade(code, parse_grading_payload(value))
+            report.grades = len(grades)
+
+        lookup_res = self.client.get_contents(org, repo, "lookup_table.toml", "main")
+        if lookup_res.content:
+            self._apply_lookup_table(lookup_res.content)
+
+        if self.config.sync_plans:
+            tree_url = self.client.api_url(f"/repos/{org}/{repo}/git/trees/main?recursive=1")
+            tree_res = self.client.get_json(tree_url)
+            blobs = []
+            if tree_res.ok and isinstance(tree_res.data, dict):
+                for entry in tree_res.data.get("tree") or []:
+                    path = entry.get("path") or ""
+                    if path.startswith("plans/") and path.endswith(".toml"):
+                        blobs.append((path, entry.get("sha")))
+            for _path, sha in blobs:
+                blob_url = self.client.api_url(f"/repos/{org}/{repo}/git/blobs/{sha}")
+                blob_res = self.client.get_json(blob_url)
+                if not blob_res.ok or not isinstance(blob_res.data, dict):
+                    continue
+                import base64
+
+                try:
+                    text = base64.b64decode(blob_res.data.get("content", "").replace("\n", ""))
+                    plan = parse_plan_toml(text.decode("utf-8", "ignore"))
+                except (ValueError, TypeError):
+                    continue
+                if not plan["year"] or not plan["major"]:
+                    continue
+                self.store.upsert_plan(plan["year"], plan["major"], plan["major_code"], plan)
+            report.plans = len(blobs)
 
         self.store.commit()
 
