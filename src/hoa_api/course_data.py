@@ -154,6 +154,24 @@ def teacher_review_counts(lecturers: dict[str, Any]) -> list[tuple[str, int]]:
     ]
 
 
+def sub_course_aliases(data: dict[str, Any]) -> list[str]:
+    """提取 `[[courses]]` 子课程条目的名称与代码，作为课程别名。
+
+    多课程仓（multi-project）用 `[[courses]]` 收纳多个子课程，例如 EE30XX 仓里
+    有「电气传动自动控制系统 / EE3004」。这些名称与代码是学生实际会搜的词，
+    也是老 course-server 匹配别名时使用的字段。
+    """
+    aliases: list[str] = []
+    for course in data.get("courses") or []:
+        if not isinstance(course, dict):
+            continue
+        for key in ("name", "course_name", "code", "course_code"):
+            value = str(course.get(key) or "").strip()
+            if value and not is_placeholder(value) and value not in aliases:
+                aliases.append(value)
+    return aliases
+
+
 def parse_course_toml(text: str) -> dict[str, Any]:
     """解析 `readme.toml`，返回规范化字段。
 
@@ -164,6 +182,9 @@ def parse_course_toml(text: str) -> dict[str, Any]:
     name = str(data.get("course_name") or "").strip()
     code = str(data.get("course_code") or "").strip()
     description = str(data.get("description") or "").strip()
+    aliases = sub_course_aliases(data)
+    if code and not is_placeholder(code) and code not in aliases:
+        aliases.insert(0, code)
     return {
         "name": "" if is_placeholder(name) else name,
         "code": "" if is_placeholder(code) else code,
@@ -172,6 +193,7 @@ def parse_course_toml(text: str) -> dict[str, Any]:
         "lecturers": lecturers,
         "sections": normalize_sections(data.get("sections")),
         "teachers": lecturer_names(lecturers),
+        "aliases": aliases,
     }
 
 

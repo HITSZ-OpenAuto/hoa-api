@@ -232,7 +232,10 @@ class SyncPipeline:
         code = repo
         toml_code = parsed["code"]
         name = parsed["name"] or info.get("description") or repo
-        aliases = sorted({toml_code} - {""}) if toml_code else []
+        # 别名 = readme.toml 的 course_code + [[courses]] 子课程名/子课程代码。
+        # 子课程别名是学生实际会搜的词（如「电气传动自动控制系统」），也是老
+        # course-server 匹配别名时使用的字段，缺了会导致多课程仓搜不到。
+        aliases = list(dict.fromkeys(a for a in (parsed.get("aliases") or []) if a))
 
         unchanged = (
             not force

@@ -24,6 +24,9 @@ from .service import Service
 API_TITLE = "HITSZ OpenAuto (HOA) Public API"
 API_VERSION = "1.0.0"
 
+# 兼容层的检索上限：老 course-server 忽略请求里的 limit，最多返回 200 条。
+COMPAT_SEARCH_LIMIT = 200
+
 
 # --------------------------------------------------------------------------
 # 限流
@@ -284,7 +287,9 @@ def create_app(config: Config | None = None, store: Store | None = None) -> Fast
 
     @compat.post("/courses:search", summary="兼容 course-server：课程检索")
     def compat_courses_search(payload: CompatCoursesSearch) -> dict[str, Any]:
-        items = service.find_courses(q=payload.keyword, limit=payload.limit)
+        # 老 course-server 忽略请求里的 limit：缓存命中时最多返回 200 条。
+        # 这里保持同样语义，避免 HIT-A 切流后看到的课程条数变少。
+        items = service.find_courses(q=payload.keyword, limit=COMPAT_SEARCH_LIMIT)
         results = [
             {
                 "code": item["code"],

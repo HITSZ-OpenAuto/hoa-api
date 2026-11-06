@@ -7,6 +7,7 @@ from typing import Any
 
 from .config import Config
 from .db import Store
+from .nicknames import resolve_nickname
 
 SEMESTER_MAP = {
     ("第一学年", "秋季"): "fresh-autumn",
@@ -35,7 +36,22 @@ class Service:
         teacher: str = "",
         limit: int = 20,
     ) -> list[dict[str, Any]]:
+        """课程检索。
+
+        三级回落，与老 course-server 的检索层级保持一致：
+        1. 直接匹配课程代码 / 名称 / 别名 / 教师 / 描述；
+        2. 直接匹配不到时，用昵称表把「高数」之类的口语还原成官方课程名再匹配；
+        3. 仍然匹配不到时，回落到课程正文（老实现的 GitHub code search 兜底）。
+        """
         results = self.store.search_courses(keyword=q, teacher=teacher, limit=limit)
+        if not results and q:
+            official = resolve_nickname(q)
+            if official != q:
+                results = self.store.search_courses(
+                    keyword=official, teacher=teacher, limit=limit
+                )
+        if not results and q:
+            results = self.store.search_content_courses(q, limit=limit)
         for item in results:
             item["site_url"] = self.site_url(item["code"])
         return results

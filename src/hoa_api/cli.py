@@ -99,6 +99,33 @@ def cmd_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reindex(args: argparse.Namespace) -> int:
+    """从已存的 readme.toml 重算课程别名（子课程名 / 子课程代码）。
+
+    早期版本的同步只把 course_code 存成别名，多课程仓（multi-project）里的
+    子课程名没有进索引，导致「电气传动自动控制系统」这类词搜不到课。
+    库里已经存了 readme.toml，重算不需要再访问 GitHub。
+    """
+    from .course_data import parse_course_toml
+
+    config = get_config()
+    store = Store(config.db_path)
+    try:
+        rows = store.iter_courses_with_toml()
+        updated = 0
+        for row in rows:
+            parsed = parse_course_toml(row["readme_toml"] or "")
+            aliases = list(dict.fromkeys(a for a in (parsed.get("aliases") or []) if a))
+            if aliases != (row["aliases"] or []):
+                store.update_course_aliases(row["code"], aliases)
+                updated += 1
+        store.commit()
+    finally:
+        store.close()
+    print(json.dumps({"courses": len(rows), "updated": updated}, ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     from .service import Service
 
@@ -163,6 +190,11 @@ def main(argv: list[str] | None = None) -> int:
 
     stats = sub.add_parser("stats", help="查看数据统计")
     stats.set_defaults(func=cmd_stats)
+
+    reindex = sub.add_parser(
+        "reindex", help="从已存的 readme.toml 重算课程别名（不访问 GitHub）"
+    )
+    reindex.set_defaults(func=cmd_reindex)
 
     check = sub.add_parser("check", help="自检：路由与 MCP 工具清单")
     check.set_defaults(func=cmd_check)

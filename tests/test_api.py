@@ -130,6 +130,55 @@ def test_compat_courses_search(client):
     assert data["data"]["results"][0]["teachers"] == ["楼云江"]
 
 
+def test_compat_courses_search_ignores_limit(client):
+    """老 course-server 忽略请求里的 limit，兼容层必须保持同样语义。
+
+    否则 HIT-A 传 limit=10 时，新服务只会返回 10 条而老服务返回全部命中。
+    """
+    for limit in (1, 5, 100):
+        resp = client.post("/v1/courses:search", json={"keyword": "机器人", "limit": limit})
+        results = resp.json()["data"]["results"]
+        assert len(results) == 1, f"limit={limit} 时结果条数被裁剪了"
+
+
+def test_compat_courses_search_nickname_fallback(tmp_path):
+    """昵称回落：直接匹配不到时，用昵称表还原官方课程名再匹配。
+
+    「高数」不是任何课程名，但它是「微积分」的常见叫法——老 course-server
+    靠昵称表命中，这里必须一致，否则 HIT-A 切流后同样的提问会查不到课。
+    """
+    config = Config(db_path=str(tmp_path / "nick.db"), rate_limit_per_min=1000)
+    store = Store(config.db_path)
+    store.upsert_course(
+        {
+            "code": "MATH1001",
+            "repo": "MATH1001",
+            "name": "微积分",
+            "description": "",
+            "repo_type": "normal",
+            "aliases": [],
+            "teachers": [],
+            "sections": [],
+            "lecturers": {},
+            "grading": {},
+            "readme_md": "",
+            "readme_toml": "",
+            "source_commit": "abc",
+            "source_updated": "2026-10-14T00:00:00Z",
+            "synced_at": "2026-11-06T00:00:00Z",
+            "materials": [],
+        }
+    )
+    store.commit()
+    app = create_app(config, store)
+    with TestClient(app) as test_client:
+        results = test_client.post("/v1/courses:search", json={"keyword": "高数"}).json()["data"][
+            "results"
+        ]
+        assert results[0]["code"] == "MATH1001"
+    store.close()
+
+
 def test_compat_course_read(client):
     resp = client.post(
         "/v1/course:read",

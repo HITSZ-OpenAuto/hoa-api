@@ -9,6 +9,7 @@ from hoa_api.course_data import (
     parse_grading_payload,
     parse_plan_toml,
 )
+from hoa_api.nicknames import resolve_nickname
 
 SAMPLE = """
 course_name = "机器人学导论"
@@ -158,3 +159,37 @@ theory = 40
     assert plan["major_code"] == "030201"
     assert plan["courses"][0]["course_code"] == "AUTO1001"
     assert plan["courses"][0]["hours"]["theory"] == 40
+
+
+def test_sub_course_aliases_are_extracted():
+    """多课程仓的子课程名与子课程代码应当进入别名。
+
+    EE30XX 仓里用 [[courses]] 收纳「电气传动自动控制系统 / EE3004」等子课程，
+    学生搜的是子课程名，老 course-server 也正是靠这些别名命中的。
+    """
+    parsed = parse_course_toml(
+        """
+course_name = "电气专业选修课"
+course_code = "EE30XX"
+repo_type = "multi-project"
+
+[[courses]]
+name = "电气传动自动控制系统"
+code = "EE3004"
+
+[[courses]]
+name = "开关电源原理与设计"
+code = "EE3011"
+"""
+    )
+    assert "电气传动自动控制系统" in parsed["aliases"]
+    assert "EE3004" in parsed["aliases"]
+    assert "开关电源原理与设计" in parsed["aliases"]
+    assert parsed["aliases"][0] == "EE30XX"
+
+
+def test_resolve_nickname():
+    assert resolve_nickname("高数") == "微积分"
+    assert resolve_nickname("线性代数") == "代数"
+    assert resolve_nickname("机器人学导论") == "机器人学导论"
+    assert resolve_nickname("") == ""
