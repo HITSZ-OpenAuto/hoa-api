@@ -14,6 +14,28 @@ except ModuleNotFoundError:  # pragma: no cover - 兼容 3.10
     import tomli as _toml  # type: ignore[no-redef]
 
 
+SEMESTER_MAP = {
+    ("第一学年", "秋季"): "fresh-autumn",
+    ("第一学年", "春季"): "fresh-spring",
+    ("第二学年", "秋季"): "sophomore-autumn",
+    ("第二学年", "春季"): "sophomore-spring",
+    ("第三学年", "秋季"): "junior-autumn",
+    ("第三学年", "春季"): "junior-spring",
+    ("第四学年", "秋季"): "senior-autumn",
+    ("第四学年", "春季"): "senior-spring",
+}
+
+
+def semester_slug(text: str | None) -> str | None:
+    """把「第一学年秋季」映射成站点路径片段 `fresh-autumn`。"""
+    if not text:
+        return None
+    for (year_part, term), slug in SEMESTER_MAP.items():
+        if year_part in text and term in text:
+            return slug
+    return None
+
+
 def loads_toml(text: str) -> dict[str, Any]:
     """解析 TOML 文本，失败时返回空字典。"""
     if not text.strip():

@@ -117,6 +117,7 @@ class Store:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._plan_index: dict[str, list[tuple[str, str, str]]] | None = None
         self._conn.executescript(SCHEMA)
         self._migrate()
         self._conn.commit()
@@ -479,6 +480,32 @@ class Store:
             return None
         return _loads(rows[0]["payload"], None)
 
+    def plan_index(self) -> dict[str, list[tuple[str, str, str]]]:
+        """培养方案课程倒排索引：课程代码 → [(year, major_code, semester_slug)]。
+
+        用于快速推导课程在站点上的页面地址，避免逐个方案线性扫描。
+        """
+        if self._plan_index is None:
+            from .course_data import semester_slug
+
+            index: dict[str, list[tuple[str, str, str]]] = {}
+            for row in self._conn.execute(
+                "SELECT year, major, major_code, payload FROM plans ORDER BY year DESC, major ASC"
+            ):
+                payload = _loads(row["payload"], {})
+                major_ref = row["major_code"] or row["major"]
+                for course in payload.get("courses", []):
+                    code = str(course.get("course_code") or "").upper()
+                    slug = semester_slug(course.get("recommended_semester"))
+                    if not code or not slug:
+                        continue
+                    index.setdefault(code, []).append((row["year"], major_ref, slug))
+            self._plan_index = index
+        return self._plan_index
+
+    def invalidate_plan_index(self) -> None:
+        self._plan_index = None
+
     def list_plans(self) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             "SELECT year, major, major_code, payload FROM plans ORDER BY year DESC, major"
@@ -539,3 +566,4 @@ class Store:
             "payload=excluded.payload",
             (year, major, major_code, _dumps(payload)),
         )
+        self._plan_index = None

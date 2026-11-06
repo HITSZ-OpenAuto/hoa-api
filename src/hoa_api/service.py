@@ -19,16 +19,6 @@ SEMESTER_MAP = {
 }
 
 
-def semester_slug(text: str | None) -> str | None:
-    """把「第一学年秋季」映射成站点路径片段 `fresh-autumn`。"""
-    if not text:
-        return None
-    for (year_part, term), slug in SEMESTER_MAP.items():
-        if year_part in text and term in text:
-            return slug
-    return None
-
-
 class Service:
     """对外暴露的数据查询能力。"""
 
@@ -195,19 +185,10 @@ class Service:
             return None
         wanted = self.identifiers(course)
 
-        for plan in self.store.list_plans():
-            detail = self.store.get_plan(plan["year"], plan["major"])
-            if not detail:
-                continue
-            for plan_course in detail.get("courses", []):
-                plan_code = str(plan_course.get("course_code") or "").upper()
-                if not plan_code or plan_code not in wanted:
-                    continue
-                slug = semester_slug(plan_course.get("recommended_semester"))
-                major_code = detail.get("major_code")
-                if slug and major_code:
-                    return (
-                        f"{self.config.site_origin.rstrip('/')}/docs/"
-                        f"{detail['year']}/{major_code}/{slug}/{plan_code}"
-                    )
+        index = self.store.plan_index()
+        for identifier in wanted:
+            for year, major_ref, slug in index.get(identifier.upper(), []):
+                return (
+                    f"{self.config.site_origin.rstrip('/')}/docs/{year}/{major_ref}/{slug}/{identifier}"
+                )
         return None
