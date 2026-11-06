@@ -421,7 +421,12 @@ jobs:
             container = os.environ.get("CONTAINER_NAME", "hoa-api")
             resolver = os.environ.get("CERT_RESOLVER", "le")
 
-            # 每个域名一个独立 router：某个域名签不出证书时不影响其它域名
+            # 每个域名两个独立 router：
+            #   - http  router：无 tls 段，绑定 web(80)，证书签发前也能访问
+            #   - https router：带 certResolver，绑定 websecure(443)，由 Traefik 自动签证书
+            # 另外每个域名独立，避免某个域名签不出证书时拖累其它域名。
+            # 注意：Traefik 中 router 一旦带 tls 段就只会绑定 TLS entrypoint，
+            #      因此 HTTP 与 HTTPS 必须拆成两个 router。
             print("http:")
             print("  routers:")
             for domain in domains:
@@ -429,8 +434,12 @@ jobs:
                 print("    hoa-api-%s:" % slug)
                 print('      rule: "Host(`%s`)"' % domain)
                 print("      entryPoints:")
-                print('        - "websecure"')
                 print('        - "web"')
+                print("      service: hoa-api-svc-%s" % slug)
+                print("    hoa-api-tls-%s:" % slug)
+                print('      rule: "Host(`%s`)"' % domain)
+                print("      entryPoints:")
+                print('        - "websecure"')
                 print("      service: hoa-api-svc-%s" % slug)
                 print("      tls:")
                 print("        certResolver: %s" % resolver)
@@ -450,12 +459,27 @@ jobs:
             mv "${TRAEFIK_DIR}/.hoa-api.yml.tmp" "${TRAEFIK_DIR}/hoa-api.yml"
 
             echo "=== 校验路由已在 Traefik 中生效 ==="
-            sleep 3
-            for d in $(echo "${domains}" | tr ',' ' '); do
-              code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 \
-                -H "Host: ${d}" http://127.0.0.1:80/api/v1/meta || true)"
-              echo "  Host: ${d} → HTTP ${code}"
+            ok=0
+            for _ in $(seq 1 30); do
+              codes=""
+              for d in $(echo "${domains}" | tr ',' ' '); do
+                c="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 \
+                  -H "Host: ${d}" http://127.0.0.1:80/api/v1/meta || true)"
+                codes="${codes}${d}=${c} "
+                if [ "${c}" = "200" ]; then ok=1; fi
+              done
+              echo "  尝试 ${_}: ${codes}"
+              if [ "${ok}" = "1" ]; then
+                break
+              fi
+              sleep 2
             done
+            if [ "${ok}" != "1" ]; then
+              echo "::error::Traefik 路由未在预期时间内生效"
+              echo "--- Traefik 日志（尾部）---"
+              docker logs --tail 40 traefik-compose-traefik-1 2>&1 | tail -30 || true
+              exit 1
+            fi
 
             docker ps --filter "name=${container}" --format '  {{.Names}} {{.Status}} {{.Ports}}'
             BASH_EOF
@@ -488,6 +512,21 @@ jobs:
             exit 1
           fi
           cat /tmp/meta.json | head -c 600
+          echo
+
+          mcp_code="$(curl -s -o /tmp/mcp.json -w '%{http_code}' --max-time 15 \
+            -X POST "http://${VPS_HOST}/mcp" \
+            -H "Host: ${DOMAIN}" \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' || true)"
+          echo "  MCP tools/list → HTTP ${mcp_code}"
+          if [ "${mcp_code}" != "200" ]; then
+            echo "::error::MCP 端点校验失败，期望 200，实际 ${mcp_code}"
+            head -c 500 /tmp/mcp.json 2>/dev/null || true
+            exit 1
+          fi
+          head -c 300 /tmp/mcp.json
           echo
 
       # 公网域名：DNS 尚未添加时允许失败，仅提示
