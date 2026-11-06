@@ -132,7 +132,12 @@ class SyncPipeline:
     # ---------- 仓库清单 ----------
 
     def _list_course_repos(self) -> list[dict[str, Any]]:
-        """返回课程仓元信息 [{repo, branch, description, pushed_at}]。"""
+        """返回课程仓元信息 [{repo, branch, description, pushed_at}]。
+
+        课程仓清单以组织维护的 ``repos_list.txt`` 为准（它本就是课程仓清单），
+        只排除模板仓；仓库描述仅作为课程名的兜底，
+        因为部分课程仓（如 AUTO2009）并没有填写描述。
+        """
         repo_list = self._fetch_repo_list()
         meta = self._fetch_org_repos()
         courses = []
@@ -142,14 +147,14 @@ class SyncPipeline:
             info = meta.get(repo)
             if not info:
                 continue
-            description = info.get("description") or ""
-            if not description.startswith("HITSZ "):
-                continue
+            description = (info.get("description") or "").strip()
+            if description.startswith("HITSZ "):
+                description = description[len("HITSZ ") :].strip()
             courses.append(
                 {
                     "repo": repo,
                     "branch": info.get("default_branch") or "main",
-                    "description": description[len("HITSZ ") :].strip(),
+                    "description": description,
                     "pushed_at": info.get("pushed_at"),
                 }
             )
