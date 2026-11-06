@@ -110,27 +110,51 @@ jobs:
             echo "############ 6b. compose.yaml ############"
             cat /home/kowyo/traefik-compose/compose.yaml 2>&1 | head -150 || true
 
-            echo "############ 6c. acme.json 中的证书域名 ############"
-            python3 - <<'PYEOF' 2>&1 | head -40 || true
+            echo "############ 6c. acme.json 摘要 ############"
+            ls -la /home/kowyo/traefik-compose/letsencrypt 2>&1 | head -10 || true
+            python3 - <<'PYEOF' 2>&1 | head -20 || true
             import json
             try:
                 d = json.load(open("/home/kowyo/traefik-compose/letsencrypt/acme.json"))
             except Exception as e:
                 print("无法读取 acme.json:", e); raise SystemExit
-            for resolver, certs in (d.get("Certificates") or {}).items():
-                for c in certs:
-                    print(resolver, "|", c.get("domain", {}).get("main"))
+            certs = d.get("Certificates") or {}
+            if not certs:
+                print("Certificates 为空（Traefik 未通过 le 签发过证书）")
+            for resolver, items in certs.items():
+                for c in items:
+                    print(resolver, "|", (c.get("domain") or {}).get("main"))
             PYEOF
 
-            echo "############ 7. 监听端口 ############"
-            (sudo -n ss -tlnp 2>&1 || ss -tlnp 2>&1) | head -40 || true
-
-            echo "############ 8. 运行中的服务 ############"
-            systemctl list-units --type=service --state=running --no-pager 2>&1 | head -30 || true
-
-            echo "############ 9. Traefik 路由 API（若开放）############"
-            for p in 8080 8081 9090; do
-              echo "--- 127.0.0.1:${p} ---"
-              curl -s --max-time 4 "http://127.0.0.1:${p}/api/http/routers" 2>&1 | head -c 4000 || true
-              echo
+            echo "############ 7. cloudflared 链路 ############"
+            ps aux 2>&1 | grep -i "[c]loudflared" | head -10 || true
+            echo "--- systemd unit ---"
+            systemctl cat cloudflared.service 2>&1 | head -40 || true
+            echo "--- ~/.cloudflared ---"
+            ls -la /home/kowyo/.cloudflared 2>&1 | head -20 || true
+            echo "--- /etc/cloudflared ---"
+            ls -la /etc/cloudflared 2>&1 | head -20 || true
+            for f in /etc/cloudflared/config.yml /etc/cloudflared/config.yaml /home/kowyo/.cloudflared/config.yml /home/kowyo/.cloudflared/config.yaml; do
+              if [ -f "$f" ]; then
+                echo ">>> 配置 ${f}"
+                cat "$f" 2>&1 | head -60 || true
+              fi
             done
+
+            echo "############ 8. 实际链路探测 ############"
+            echo "--- 公网 https://hoa.moe 响应头 ---"
+            curl -sSI --max-time 12 https://hoa.moe/ 2>&1 | head -25 || true
+            echo "--- 公网 https://stats.hoa.moe 响应头 ---"
+            curl -sSI --max-time 12 https://stats.hoa.moe/ 2>&1 | head -25 || true
+            echo "--- 本机 Traefik web(80) + Host: hoa.moe ---"
+            curl -sSI --max-time 8 -H 'Host: hoa.moe' http://127.0.0.1:80/ 2>&1 | head -15 || true
+            echo "--- 本机 Traefik web(80) + Host: stats.hoa.moe（已知可用路由）---"
+            curl -sSI --max-time 8 -H 'Host: stats.hoa.moe' http://127.0.0.1:80/ 2>&1 | head -15 || true
+            echo "--- 本机 hoa-fuma 直连 19800 ---"
+            curl -sSI --max-time 8 http://127.0.0.1:19800/ 2>&1 | head -15 || true
+
+            echo "############ 9. Traefik 日志（最近路由匹配）############"
+            docker logs --tail 120 traefik-compose-traefik-1 2>&1 | tail -60 || true
+
+            echo "############ 10. 运行中的服务 ############"
+            systemctl list-units --type=service --state=running --no-pager 2>&1 | head -30 || true
