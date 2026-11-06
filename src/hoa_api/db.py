@@ -19,6 +19,7 @@ PRAGMA synchronous=NORMAL;
 CREATE TABLE IF NOT EXISTS courses (
     code            TEXT PRIMARY KEY,
     repo            TEXT NOT NULL,
+    course_code     TEXT NOT NULL DEFAULT '',
     name            TEXT NOT NULL DEFAULT '',
     description     TEXT NOT NULL DEFAULT '',
     repo_type       TEXT NOT NULL DEFAULT 'normal',
@@ -142,13 +143,14 @@ class Store:
         self._conn.execute(
             """
             INSERT INTO courses(
-                code, repo, name, description, repo_type, aliases, teachers,
+                code, repo, course_code, name, description, repo_type, aliases, teachers,
                 credit, assessment_method, course_nature, hours, sections,
                 lecturers, grading, readme_md, readme_toml, source_commit,
                 source_updated, synced_at, has_materials
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(code) DO UPDATE SET
-                repo=excluded.repo, name=excluded.name,
+                repo=excluded.repo, course_code=excluded.course_code,
+                name=excluded.name,
                 description=excluded.description, repo_type=excluded.repo_type,
                 aliases=excluded.aliases, teachers=excluded.teachers,
                 credit=excluded.credit,
@@ -165,6 +167,7 @@ class Store:
             (
                 course["code"],
                 course["repo"],
+                course.get("course_code", ""),
                 course.get("name", ""),
                 course.get("description", ""),
                 course.get("repo_type", "normal"),
@@ -182,7 +185,7 @@ class Store:
                 course.get("source_commit"),
                 course.get("source_updated"),
                 course["synced_at"],
-                1 if course.get("materials") else 0,
+                course.get("has_materials", 1 if course.get("materials") else 0),
             ),
         )
 
@@ -225,6 +228,7 @@ class Store:
     def _row_to_summary(row: sqlite3.Row) -> dict[str, Any]:
         return {
             "code": row["code"],
+            "course_code": row["course_code"],
             "name": row["name"],
             "aliases": _loads(row["aliases"], []),
             "teachers": _loads(row["teachers"], []),
@@ -239,6 +243,7 @@ class Store:
     def _row_to_course(row: sqlite3.Row) -> dict[str, Any]:
         return {
             "code": row["code"],
+            "course_code": row["course_code"],
             "name": row["name"],
             "description": row["description"],
             "aliases": _loads(row["aliases"], []),
@@ -261,6 +266,7 @@ class Store:
                 "updated_at": row["source_updated"],
                 "synced_at": row["synced_at"],
             },
+            "has_materials": row["has_materials"],
             "updated_at": row["source_updated"],
         }
 
@@ -274,6 +280,7 @@ class Store:
         return self._conn.execute("SELECT COUNT(*) AS c FROM materials").fetchone()["c"]
 
     def get_course(self, code: str) -> dict[str, Any] | None:
+        """按课程 ID（仓库名）查询，大小写不敏感。"""
         row = self._conn.execute(
             "SELECT * FROM courses WHERE code = ? COLLATE NOCASE", (code,)
         ).fetchone()
@@ -290,6 +297,23 @@ class Store:
         if row is None:
             return None
         return self._row_to_course(row)
+
+    def get_course_by_alias(self, alias: str) -> dict[str, Any] | None:
+        """按别名 / readme.toml 中的 course_code 查询。
+
+        历史课程仓的 `course_code` 字段并不总等于仓库名（例如 MATH1005K 仓里写的是
+        MATH1005），因此课程身份一律以仓库为准，别名仅作为检索入口。
+        """
+        needle = alias.strip()
+        if not needle:
+            return None
+        for row in self._conn.execute("SELECT * FROM courses"):
+            if (row["course_code"] or "").lower() == needle.lower():
+                return self._row_to_course(row)
+            for item in _loads(row["aliases"], []):
+                if item.lower() == needle.lower():
+                    return self._row_to_course(row)
+        return None
 
     def all_courses(self) -> list[dict[str, Any]]:
         rows = self._conn.execute("SELECT * FROM courses ORDER BY code").fetchall()
@@ -327,6 +351,10 @@ class Store:
                     score += 60
                 elif kw in code:
                     score += 45
+                if (summary.get("course_code") or "").upper() == kw:
+                    score += 70
+                elif kw in (summary.get("course_code") or "").upper():
+                    score += 40
                 if keyword == summary["name"]:
                     score += 90
                 elif keyword and keyword in summary["name"]:

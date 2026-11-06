@@ -89,3 +89,74 @@ def test_counts(store):
     assert store.count_courses() == 1
     assert store.count_teachers() == 2
     assert store.count_materials() == 2
+
+
+def test_course_identity_is_repo_not_toml_code(tmp_path):
+    """回归：课程身份必须以仓库 ID 为准。
+
+    真实案例：``MATH1005K`` 仓的 readme.toml 里写的是 ``course_code = "MATH1005"``，
+    若以它作主键会与真正的 ``MATH1005`` 仓互相覆盖，导致 8 门课凭空消失。
+    """
+    store = Store(tmp_path / "ident.db")
+    for repo, toml_code, name in (
+        ("MATH1005", "MATH1005", "复变函数与积分变换"),
+        ("MATH1005K", "MATH1005", "复变函数与积分变换(K班)"),
+    ):
+        store.upsert_course(
+            {
+                "code": repo,
+                "repo": repo,
+                "course_code": toml_code,
+                "name": name,
+                "description": "",
+                "repo_type": "normal",
+                "aliases": [toml_code],
+                "teachers": [],
+                "sections": [],
+                "lecturers": {},
+                "grading": {},
+                "readme_md": "",
+                "readme_toml": "",
+                "source_commit": None,
+                "source_updated": None,
+                "synced_at": "2026-11-06T00:00:00Z",
+                "materials": [],
+            }
+        )
+    store.commit()
+
+    assert store.count_courses() == 2
+    assert store.get_course("MATH1005K")["repo"] == "MATH1005K"
+    assert store.get_course("MATH1005")["repo"] == "MATH1005"
+    # 别名可解析，但不得改变身份
+    assert store.get_course_by_alias("MATH1005")["repo"] == "MATH1005"
+    store.close()
+
+
+def test_search_matches_toml_course_code(tmp_path):
+    store = Store(tmp_path / "search.db")
+    store.upsert_course(
+        {
+            "code": "ELEC2102K",
+            "repo": "ELEC2102K",
+            "course_code": "ELEC2102k",
+            "name": "概率和数理统计",
+            "description": "",
+            "repo_type": "normal",
+            "aliases": ["ELEC2102k"],
+            "teachers": [],
+            "sections": [],
+            "lecturers": {},
+            "grading": {},
+            "readme_md": "",
+            "readme_toml": "",
+            "source_commit": None,
+            "source_updated": None,
+            "synced_at": "2026-11-06T00:00:00Z",
+            "materials": [],
+        }
+    )
+    store.commit()
+    assert store.search_courses(keyword="ELEC2102K")[0]["code"] == "ELEC2102K"
+    assert store.search_courses(keyword="ELEC2102k")[0]["code"] == "ELEC2102K"
+    store.close()

@@ -202,8 +202,12 @@ class SyncPipeline:
 
         readme_toml = toml_res.content or ""
         parsed = parse_course_toml(readme_toml)
-        code = parsed["code"] or repo
+        # 课程身份一律以仓库 ID 为准：历史课程仓的 course_code 字段并不总等于仓库名
+        # （例如 MATH1005K 仓里写的是 MATH1005），以它作主键会互相覆盖。
+        code = repo
+        toml_code = parsed["code"]
         name = parsed["name"] or info.get("description") or repo
+        aliases = sorted({toml_code} - {""}) if toml_code else []
 
         unchanged = (
             toml_res.not_modified
@@ -218,10 +222,11 @@ class SyncPipeline:
                 {
                     "code": code,
                     "repo": repo,
+                    "course_code": toml_code,
                     "name": name,
                     "description": parsed["description"],
                     "repo_type": parsed["repo_type"],
-                    "aliases": [],
+                    "aliases": aliases,
                     "teachers": parsed["teachers"],
                     "sections": parsed["sections"],
                     "lecturers": parsed["lecturers"],

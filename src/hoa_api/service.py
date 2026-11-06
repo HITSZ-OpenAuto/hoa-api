@@ -50,12 +50,27 @@ class Service:
         return results
 
     def get_course(self, code: str) -> dict[str, Any] | None:
-        course = self.store.get_course(code) or self.store.get_course_by_repo(code)
+        """按任意标识取课程：仓库 ID、readme.toml 的 course_code 或别名。"""
+        course = (
+            self.store.get_course(code)
+            or self.store.get_course_by_repo(code)
+            or self.store.get_course_by_alias(code)
+        )
         if not course:
             return None
         course["site_url"] = self.site_url(course["code"])
         course["grading"] = self.store.get_grading(course["code"]) or course.get("grading") or {}
         return course
+
+    def identifiers(self, course: dict[str, Any]) -> set[str]:
+        """课程在培养方案里可能用到的全部标识。"""
+        values = {
+            str(course.get("code") or ""),
+            str(course.get("course_code") or ""),
+            str(course.get("repo") or ""),
+        }
+        values.update(str(item) for item in course.get("aliases") or [])
+        return {value.strip().upper() for value in values if value.strip()}
 
     def get_readme(self, code: str, fmt: str = "md") -> tuple[str, str] | None:
         course = self.get_course(code)
@@ -66,7 +81,7 @@ class Service:
         return course.get("readme_md") or "", "text/markdown; charset=utf-8"
 
     def get_materials(self, code: str, path: str = "", limit: int = 200) -> dict[str, Any] | None:
-        course = self.store.get_course(code) or self.store.get_course_by_repo(code)
+        course = self.get_course(code)
         if not course:
             return None
         nodes = self.store.get_materials(course["code"], path)
@@ -161,27 +176,38 @@ class Service:
     # ---------- 内部 ----------
 
     def _repo_for_code(self, code: str) -> str | None:
-        course = self.store.get_course(code)
-        if course:
-            return course["repo"]
-        course = self.store.get_course_by_repo(code)
+        """按任意标识反查课程所在仓库。"""
+        course = (
+            self.store.get_course(code)
+            or self.store.get_course_by_repo(code)
+            or self.store.get_course_by_alias(code)
+        )
         return course["repo"] if course else None
 
     def site_url(self, code: str) -> str | None:
-        """根据培养方案推导站点课程页地址。"""
-        plans = self.store.list_plans()
-        for plan in plans:
+        """根据培养方案推导站点课程页地址。
+
+        培养方案里的 course_code 可能与仓库 ID 不一致（历史遗留），
+        因此用课程的全部标识做匹配。
+        """
+        course = self.store.get_course(code) or self.store.get_course_by_repo(code)
+        if not course:
+            return None
+        wanted = self.identifiers(course)
+
+        for plan in self.store.list_plans():
             detail = self.store.get_plan(plan["year"], plan["major"])
             if not detail:
                 continue
-            for course in detail.get("courses", []):
-                if (course.get("course_code") or "").upper() != code.upper():
+            for plan_course in detail.get("courses", []):
+                plan_code = str(plan_course.get("course_code") or "").upper()
+                if not plan_code or plan_code not in wanted:
                     continue
-                slug = semester_slug(course.get("recommended_semester"))
+                slug = semester_slug(plan_course.get("recommended_semester"))
                 major_code = detail.get("major_code")
                 if slug and major_code:
                     return (
                         f"{self.config.site_origin.rstrip('/')}/docs/"
-                        f"{detail['year']}/{major_code}/{slug}/{code}"
+                        f"{detail['year']}/{major_code}/{slug}/{plan_code}"
                     )
         return None
