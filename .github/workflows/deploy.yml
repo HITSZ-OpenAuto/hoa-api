@@ -374,14 +374,11 @@ jobs:
             # 数据卷首次挂载时可能属主是 root，而容器以 uid 10001 运行，先纠正属主
             docker run --rm --user root -v hoa-api-data:/app/data "${image_ref}" \
               chown -R 10001:10001 /app/data 2>/dev/null || true
+            # 注意：这里刻意不用 python -c，避免 YAML 块标量剥离公共缩进后
+            # 内嵌脚本缩进错位（unexpected indent）导致课程数被误判为 0。
             COURSE_COUNT="$(docker run --rm -v hoa-api-data:/app/data "${image_ref}" \
-              hoa-api stats 2>/dev/null | python3 -c '
-              import json,sys
-              try:
-                  print(json.load(sys.stdin).get("course_count", 0))
-              except Exception:
-                  print(0)
-              ' || echo 0)"
+              hoa-api stats 2>/dev/null | grep -o '"course_count": *[0-9]\+' | grep -o '[0-9]\+' | head -1 || true)"
+            COURSE_COUNT="${COURSE_COUNT:-0}"
             echo "  当前课程数: ${COURSE_COUNT}"
             if [ "${COURSE_COUNT}" -lt 100 ]; then
               echo "=== 预热数据（一次性同步，约 5-10 分钟）==="

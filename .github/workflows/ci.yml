@@ -30,6 +30,9 @@ jobs:
       - name: 单元测试
         run: pytest -q
 
+      - name: 校验工作流内嵌 Python
+        run: python scripts/check_workflow_python.py
+
       - name: 导出 OpenAPI 契约
         run: |
           pip install pyyaml
