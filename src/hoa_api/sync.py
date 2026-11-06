@@ -87,7 +87,12 @@ class SyncPipeline:
 
     # ---------- 主流程 ----------
 
-    def run(self, limit: int | None = None, include_major_data: bool = True) -> SyncReport:
+    def run(
+        self,
+        limit: int | None = None,
+        include_major_data: bool = True,
+        force: bool = False,
+    ) -> SyncReport:
         report = SyncReport()
         repos = self._list_course_repos()
         report.courses_total = len(repos)
@@ -97,7 +102,7 @@ class SyncPipeline:
         for repo_info in repos:
             repo = repo_info["repo"]
             try:
-                if self._sync_repo(repo, repo_info):
+                if self._sync_repo(repo, repo_info, force=force):
                     report.courses_updated += 1
                 else:
                     report.courses_unchanged += 1
@@ -176,15 +181,16 @@ class SyncPipeline:
 
     # ---------- 单仓同步 ----------
 
-    def _sync_repo(self, repo: str, info: dict[str, Any]) -> bool:
+    def _sync_repo(self, repo: str, info: dict[str, Any], force: bool = False) -> bool:
         """同步单个课程仓，返回是否发生更新。
 
         `info` 来自组织仓库列表，已含默认分支与 pushed_at，避免重复调用 API。
+        `force` 为真时忽略 ETag 缓存，强制重新入库（用于解析逻辑变更后重建）。
         """
         sync_row = self.store.get_repo_sync(repo)
-        etag_toml = sync_row["etag_toml"] if sync_row else None
-        etag_readme = sync_row["etag_readme"] if sync_row else None
-        etag_tree = sync_row["etag_tree"] if sync_row else None
+        etag_toml = None if force else (sync_row["etag_toml"] if sync_row else None)
+        etag_readme = None if force else (sync_row["etag_readme"] if sync_row else None)
+        etag_tree = None if force else (sync_row["etag_tree"] if sync_row else None)
 
         branch = info.get("branch") or "main"
 
@@ -220,7 +226,8 @@ class SyncPipeline:
         aliases = sorted({toml_code} - {""}) if toml_code else []
 
         unchanged = (
-            toml_res.not_modified
+            not force
+            and toml_res.not_modified
             and readme_res.not_modified
             and not tree_changed
             and sync_row is not None

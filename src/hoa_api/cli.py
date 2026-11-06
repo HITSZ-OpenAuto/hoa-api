@@ -90,6 +90,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
         report = pipeline.run(
             limit=args.limit,
             include_major_data=not args.no_major_data,
+            force=args.force,
         )
     finally:
         pipeline.close()
@@ -153,6 +154,11 @@ def main(argv: list[str] | None = None) -> int:
     sync = sub.add_parser("sync", help="立即执行一次数据同步")
     sync.add_argument("--limit", type=int, default=None, help="只同步前 N 个课程仓")
     sync.add_argument("--no-major-data", action="store_true", help="跳过成绩与培养方案同步")
+    sync.add_argument(
+        "--force",
+        action="store_true",
+        help="忽略 ETag 缓存强制重建（解析逻辑变更后使用）",
+    )
     sync.set_defaults(func=cmd_sync)
 
     stats = sub.add_parser("stats", help="查看数据统计")
