@@ -69,6 +69,64 @@ def test_search_by_teacher(store):
     assert store.search_courses(teacher="不存在") == []
 
 
+def test_search_matches_readme_body(tmp_path):
+    """正文命中：与老 course-server 的 GitHub 代码检索兜底行为保持一致。
+
+    老实现在本地缓存未命中时会回落到 GitHub code search，因此像
+    「线性代数」这种只出现在 readme 正文、子课程名里的关键词同样能命中课程。
+    新服务直接用已同步下来的 readme 正文匹配，无需再消耗 GitHub API 配额。
+    """
+    store = Store(tmp_path / "body.db")
+    store.upsert_course(
+        {
+            "code": "COMP2010",
+            "repo": "COMP2010",
+            "name": "近世代数",
+            "description": "",
+            "repo_type": "normal",
+            "aliases": [],
+            "teachers": ["唐珑珑"],
+            "sections": [],
+            "lecturers": {},
+            "grading": {},
+            "readme_md": "本课程前修要求：线性代数",
+            "readme_toml": 'course_name = "近世代数"\n[[courses]]\nname = "线性代数复习"',
+            "source_commit": "abc123",
+            "source_updated": "2026-10-14T00:00:00Z",
+            "synced_at": "2026-11-06T00:00:00Z",
+            "materials": [],
+        }
+    )
+    store.commit()
+
+    assert store.search_courses(keyword="线性代数")[0]["code"] == "COMP2010"
+    # 正文命中排在课程名命中之后
+    store.upsert_course(
+        {
+            "code": "AUTO3005",
+            "repo": "AUTO3005",
+            "name": "线性代数",
+            "description": "",
+            "repo_type": "normal",
+            "aliases": [],
+            "teachers": [],
+            "sections": [],
+            "lecturers": {},
+            "grading": {},
+            "readme_md": "",
+            "readme_toml": "",
+            "source_commit": "abc123",
+            "source_updated": "2026-10-14T00:00:00Z",
+            "synced_at": "2026-11-06T00:00:00Z",
+            "materials": [],
+        }
+    )
+    store.commit()
+    codes = [item["code"] for item in store.search_courses(keyword="线性代数")]
+    assert codes[0] == "AUTO3005"
+    assert "COMP2010" in codes
+
+
 def test_materials_tree(store):
     root = store.get_materials("AUTO3005")
     assert [node["name"] for node in root] == ["exams"]

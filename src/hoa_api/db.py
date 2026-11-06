@@ -393,6 +393,15 @@ class Store:
                     score += 25
                 if keyword in (row["description"] or ""):
                     score += 10
+                # 正文命中：与老 course-server 的 GitHub 代码检索行为对齐。
+                # 老实现会在本地缓存未命中时回落到 GitHub code search，
+                # 因此子课程名、readme 正文里的关键词同样能命中该课程。
+                # 这里直接用已同步下来的 readme 正文，无需再消耗 GitHub API 配额。
+                if len(keyword) >= 2 and (
+                    keyword in (row["readme_toml"] or "")
+                    or keyword in (row["readme_md"] or "")
+                ):
+                    score += 8
                 if score <= 0:
                     continue
             elif not teacher:
