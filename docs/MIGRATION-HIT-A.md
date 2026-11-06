@@ -92,7 +92,11 @@ curl -s localhost:8081/v1/courses:search -H 'Content-Type: application/json' \
   -d '{"keyword":"自动控制","limit":5}'
 ```
 
-两者的 `data.results` 应对齐（字段集合一致；`hoa-api` 额外保证 `teachers`/`aliases` 非空）。
+两者信封一致（`{ok, data:{results:[...]}}`），`hoa-api` 额外保证 `teachers`/`aliases` 非空。
+**注意老服务忽略 `limit`**，因此对比时不要按条数判断，要按课程代码集合判断。
+
+课程清单以 `repos_list.txt` 为准，老服务按组织全量仓库建索引，
+所以老服务可能多出已删除的仓（例如 `SOPR`）——这是新服务更准，不是回归。
 
 ### 3.3 切换
 
@@ -108,6 +112,9 @@ systemctl restart agent-backend
 systemctl status agent-backend
 ```
 
+> 切到官方域名时把这一行改成 `COURSE_SERVER_URL=https://api.hoa.moe`，
+> 并注意老服务对上游不做鉴权，官方 API 的公开只读接口同样不需要 token。
+
 ### 3.4 验证
 
 ```bash
@@ -122,19 +129,62 @@ curl -s localhost:8080/v1/skills/courses.search:invoke \
 
 ---
 
-## 4. 行为差异（需要留意）
+## 4. 行为差异（已逐项实测对齐）
 
 | 差异点 | course-server | hoa-api | 影响 |
 | --- | --- | --- | --- |
 | 传输方法 | POST | POST（兼容层） | 无 |
 | 数据新鲜度 | 实时读 GitHub（受 GitHub API 配额与延迟影响） | SQLite 快照，默认 6 小时同步一次 | 刚上传的资料最多滞后一个同步周期 |
 | 失败语义 | 网关超时 / GitHub 错误 | 统一 `{ok:false, error:{code,message}}` | 错误信息更规范 |
-| 跨校区 | 支持 shenzhen / harbin / weihai | **当前仅深圳（HOA）** | HIT-A 若用到哈工大本部/威海校区需保留旧路径 |
-| 缓存 | `cache_org` 回退（HOA-Cache） | 直读 HITSZ-OpenAuto | 旧回退仓不再需要 |
+| 跨校区 | 支持 shenzhen / harbin / weihai | **覆盖三校区**（见下） | 无 |
+| 检索字段 | 代码 / 名称 / 仓库 / 教师 / **子课程别名** + **昵称表** + GitHub 代码兜底 | 同上（本地等价实现） | 无 |
+| `limit` 参数 | **被忽略**（最多返回 200 条） | 兼容层同样忽略 | 无 |
+| 课程清单 | 组织的全部仓库 | 以 `repos_list.txt` 为准 | 已删除的仓不再出现（见下） |
 
-> 跨校区是唯一的**功能性缺口**。如果 HIT-A 的 `hit.teachers` 等 skill 依赖本部/威海数据，
-> 迁移时应把 `COURSE_SERVER_URL` 切走、同时把 `PR_SERVER_URL` 保留给 `course-server`，
-> 让读路径走 HOA 官方 API、写路径与跨校区仍走旧服务。
+### 4.1 跨校区不是缺口
+
+老服务的 `internal/localcache/cache.go` 里写得很清楚：
+
+```go
+// HOA 实体数据只在深圳 org；本部/威海在 Search/Resolve 层别名过来。
+if c.Campus != config.CampusShenzhen {
+    fmt.Printf("cache: skip campus %s (alias to shenzhen HOA)\n", c.Campus)
+    continue
+}
+```
+
+即 harbin / weihai 并不是独立课表，只是深圳 HOA 数据的别名视图。实测 `campus=shenzhen / harbin / weihai`
+三种取值在新旧两侧返回完全一致的结果集。
+
+### 4.2 检索语义的三处补齐
+
+老服务的匹配规则已按源码逐条复刻：
+
+| 规则 | 老实现 | 新实现 |
+| --- | --- | --- |
+| 子课程别名 | `parseSummary` 把 `[[courses]]` 的 `name`/`code` 收进 `Aliases` | `parse_course_toml` 同样提取；多课程仓（如 EE30XX 的「电气传动自动控制系统 / EE3004」）可被搜到 |
+| 昵称表 | `nicknames.json`：`线性代数→代数`、`高数→微积分`… | `src/hoa_api/nicknames.py`，与老表逐条一致 |
+| 正文兜底 | 缓存未命中时回落 GitHub code search | 本地匹配已同步的 `readme.toml` / `readme.md`，不消耗 GitHub 配额 |
+
+另外老服务**忽略请求里的 `limit`**（`cacheLimit` 固定 200），兼容层保持同样语义，
+避免 HIT-A 传 `limit=10` 时看到的课程条数变少。
+
+### 4.3 覆盖对拍结果
+
+用 HIT-A 的真实报文格式（`keyword` + `campus` + `target.course_code` + `include_toml`）对拍 51 个查询：
+
+- **46 个查询**：新服务结果完全覆盖老服务；
+- **3 个查询**：老服务多出 `SOPR`——该仓在 `HITSZ-OpenAuto` 已 **404 不存在**，是老服务本地缓存里的僵尸条目，新服务按 `repos_list.txt` 正确排除；
+- **2 个查询**：老服务自身报错（`化学` / `通信`）。
+
+结论：**新服务是老服务的严格超集**（在老服务能给出真实数据的前提下）。
+
+### 4.4 HIT-A 实际只用两个读端点
+
+`agent-backend` 只引用 `/v1/courses:search` 与 `/v1/course:read`
+（`internal/courseclient/courseclient.go:43,52`、`internal/skills/course_skills.go:64,127`），
+响应体是 `json.RawMessage` 原样透传给下游，**不解析成结构体**，因此新增字段不影响它。
+写入类端点（`course:preview` / `course:submit` / `pr:lookup`）与本次切流无关，继续留在旧服务。
 
 ---
 
