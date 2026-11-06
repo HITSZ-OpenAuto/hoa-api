@@ -349,8 +349,11 @@ jobs:
             bash <<'BASH_EOF'
             set -eo pipefail
 
-            # metadata-action 会输出多个标签（latest,build-N-M），取第一个即可
-            image_ref="${IMAGE_TAGS%%,*}"
+            # metadata-action 会输出多个标签（换行分隔），取不可变的 build 标签优先
+            image_ref="$(printf '%s\n' "${IMAGE_TAGS}" | grep -v ':latest$' | head -n 1 | tr -d '\r')"
+            if [ -z "${image_ref}" ]; then
+              image_ref="$(printf '%s\n' "${IMAGE_TAGS}" | head -n 1 | tr -d '\r')"
+            fi
             container="${CONTAINER}"
             app_port="${APP_PORT}"
             net="${TRAEFIK_NET}"
