@@ -272,6 +272,21 @@ jobs:
             print("     account_id =", account.get("id"))
             print("     account_name =", account.get("name"))
             '
+              echo "  该 token 可见的全部 zone:"
+              curl -sS --max-time 12 -H "Authorization: Bearer ${CF_TOKEN}" \
+                "https://api.cloudflare.com/client/v4/zones" | python3 -c '
+            import json, sys
+            try:
+                d = json.load(sys.stdin)
+            except Exception as exc:
+                print("    无法解析响应:", exc); raise SystemExit
+            if not d.get("success"):
+                print("    查询失败:", d.get("errors")); raise SystemExit
+            for z in d.get("result") or []:
+                acc = z.get("account") or {}
+                print("     -", z.get("name"), "| status =", z.get("status"),
+                      "| account =", acc.get("name"), acc.get("id"))
+            '
             fi
             BASH_EOF
 
