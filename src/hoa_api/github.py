@@ -41,6 +41,7 @@ class GitHubClient:
         user_agent: str = "hoa-api/1.0",
         timeout: float = 30.0,
         max_retries: int = 3,
+        raw_timeout: float = 8.0,
     ) -> None:
         headers = {
             "Accept": "application/vnd.github+json",
@@ -51,11 +52,14 @@ class GitHubClient:
             headers["Authorization"] = f"Bearer {token}"
         self._client = httpx.Client(headers=headers, timeout=timeout, follow_redirects=True)
         self._max_retries = max_retries
+        # raw 通道在受限网络下可能挂起，给它更短的超时与更少的重试，
+        # 以便尽快降级到可靠的 Contents API。
         self._raw = httpx.Client(
             headers={"User-Agent": user_agent},
-            timeout=timeout,
+            timeout=raw_timeout,
             follow_redirects=True,
         )
+        self._raw_max_retries = 1
         self._raw_ok: bool | None = None
 
     def close(self) -> None:
@@ -77,15 +81,17 @@ class GitHubClient:
         etag: str | None,
         accept: str | None = None,
         binary: bool = False,
+        max_retries: int | None = None,
     ) -> FetchResult:
         headers = {}
         if accept:
             headers["Accept"] = accept
         if etag:
             headers["If-None-Match"] = etag
+        attempts = self._max_retries if max_retries is None else max_retries
 
         last_error: Exception | None = None
-        for attempt in range(self._max_retries):
+        for attempt in range(attempts):
             try:
                 response = client.get(url, headers=headers)
             except httpx.HTTPError as exc:  # 网络抖动
@@ -116,7 +122,9 @@ class GitHubClient:
 
     def get_text(self, url: str, etag: str | None = None) -> FetchResult:
         """取文本内容（raw.githubusercontent 或任意 URL）。"""
-        return self._request(self._raw, url, etag, accept="text/plain, */*")
+        return self._request(
+            self._raw, url, etag, accept="text/plain, */*", max_retries=self._raw_max_retries
+        )
 
     def get_bytes(self, url: str) -> FetchResult:
         """取二进制内容（如 tarball）。"""
