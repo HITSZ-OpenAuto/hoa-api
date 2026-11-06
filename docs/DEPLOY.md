@@ -94,6 +94,17 @@ DNS 生效后，Traefik 会在收到该域名的 TLS 请求时自动通过 Let's
 
 > `api.hoa.moe` 走 Cloudflare 橙云时，回源到源站 443；`hoa-api.limpu.cn` 若不开代理则是浏览器直连源站，证书同样由 Traefik 签发。
 
+**没有 DNS 权限时的临时入口**：可以额外挂一个 IP 型公共域名（例如 `77.42.21.198.sslip.io`，
+由 sslip.io 按 IP 自动解析，不需要任何账户或 DNS 权限）。把它加进调用方的
+`additional_domains` 即可，Traefik 会照样通过 Let's Encrypt 签发真实证书：
+
+```yaml
+additional_domains: hoa-api.limpu.cn,77.42.21.198.sslip.io
+```
+
+实测该域名的证书为 `issuer: C=US; O=Let's Encrypt; CN=YR1`，全部 REST 与 MCP 接口返回 200。
+官方 A 记录加好后，从 `additional_domains` 里移除这个临时域名即可。
+
 ### A5. 验证
 
 ```bash
