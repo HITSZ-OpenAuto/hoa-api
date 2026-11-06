@@ -1,0 +1,524 @@
+openapi: 3.1.0
+info:
+  title: HITSZ OpenAuto (HOA) Public API
+  description: 哈工大（深圳）自动化本科开源计划官方接口。数据来自 [HITSZ-OpenAuto](https://github.com/HITSZ-OpenAuto) 组织的公开课程仓。
+  version: 1.0.0
+paths:
+  /api/v1/courses:
+    get:
+      tags:
+      - courses
+      summary: 检索课程列表
+      operationId: list_courses_api_v1_courses_get
+      parameters:
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+          description: 关键词：课程代码 / 名称 / 别名 / 教师 / 描述
+          default: ''
+          title: Q
+        description: 关键词：课程代码 / 名称 / 别名 / 教师 / 描述
+      - name: teacher
+        in: query
+        required: false
+        schema:
+          type: string
+          description: 教师姓名
+          default: ''
+          title: Teacher
+        description: 教师姓名
+      - name: major
+        in: query
+        required: false
+        schema:
+          type: string
+          description: 专业
+          default: ''
+          title: Major
+        description: 专业
+      - name: year
+        in: query
+        required: false
+        schema:
+          type: string
+          description: 入学年份
+          default: ''
+          title: Year
+        description: 入学年份
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response List Courses Api V1 Courses Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/courses/{code}:
+    get:
+      tags:
+      - courses
+      summary: 课程详情
+      operationId: get_course_api_v1_courses__code__get
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Code
+      - name: include
+        in: query
+        required: false
+        schema:
+          type: string
+          default: sections,lecturers,grading
+          title: Include
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response Get Course Api V1 Courses  Code  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/courses/{code}/readme:
+    get:
+      tags:
+      - courses
+      summary: 课程 README
+      operationId: get_course_readme_api_v1_courses__code__readme_get
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Code
+      - name: format
+        in: query
+        required: false
+        schema:
+          type: string
+          pattern: ^(md|toml)$
+          default: md
+          title: Format
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/courses/{code}/materials:
+    get:
+      tags:
+      - courses
+      summary: 课程资料文件树
+      operationId: get_course_materials_api_v1_courses__code__materials_get
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Code
+      - name: path
+        in: query
+        required: false
+        schema:
+          type: string
+          description: 子目录路径
+          default: ''
+          title: Path
+        description: 子目录路径
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 1000
+          minimum: 1
+          default: 200
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response Get Course Materials Api V1 Courses  Code  Materials Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/teachers:
+    get:
+      tags:
+      - teachers
+      summary: 教师索引
+      operationId: list_teachers_api_v1_teachers_get
+      parameters:
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+          description: 教师姓名
+          default: ''
+          title: Q
+        description: 教师姓名
+      - name: course
+        in: query
+        required: false
+        schema:
+          type: string
+          description: 课程代码
+          default: ''
+          title: Course
+        description: 课程代码
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response List Teachers Api V1 Teachers Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/grades:
+    get:
+      tags:
+      - grading
+      summary: 全部课程成绩构成
+      operationId: list_grades_api_v1_grades_get
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          default: 200
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response List Grades Api V1 Grades Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/grades/{code}:
+    get:
+      tags:
+      - grading
+      summary: 课程成绩构成
+      operationId: get_grades_api_v1_grades__code__get
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Code
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response Get Grades Api V1 Grades  Code  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/plans:
+    get:
+      tags:
+      - plans
+      summary: 培养方案列表
+      operationId: list_plans_api_v1_plans_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response List Plans Api V1 Plans Get
+  /api/v1/plans/{year}/{major}:
+    get:
+      tags:
+      - plans
+      summary: 培养方案详情
+      operationId: get_plan_api_v1_plans__year___major__get
+      parameters:
+      - name: year
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Year
+      - name: major
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Major
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response Get Plan Api V1 Plans  Year   Major  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/search:
+    get:
+      tags:
+      - search
+      summary: 全站检索
+      operationId: search_api_v1_search_get
+      parameters:
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          title: Q
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Search Api V1 Search Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/meta:
+    get:
+      tags:
+      - meta
+      summary: 服务元信息
+      operationId: get_meta_api_v1_meta_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Get Meta Api V1 Meta Get
+  /v1/courses:search:
+    post:
+      summary: 兼容 course-server：课程检索
+      operationId: compat_courses_search_v1_courses_search_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompatCoursesSearch'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Compat Courses Search V1 Courses Search Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/course:read:
+    post:
+      summary: 兼容 course-server：读取课程 README
+      operationId: compat_course_read_v1_course_read_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompatCourseRead'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Compat Course Read V1 Course Read Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    CompatCourseRead:
+      properties:
+        target:
+          $ref: '#/components/schemas/CompatTarget'
+        include_toml:
+          type: boolean
+          title: Include Toml
+          default: false
+      type: object
+      required:
+      - target
+      title: CompatCourseRead
+    CompatCoursesSearch:
+      properties:
+        keyword:
+          type: string
+          title: Keyword
+          default: ''
+        campus:
+          type: string
+          title: Campus
+          default: shenzhen
+        limit:
+          type: integer
+          maximum: 100.0
+          minimum: 1.0
+          title: Limit
+          default: 10
+      type: object
+      title: CompatCoursesSearch
+    CompatTarget:
+      properties:
+        campus:
+          type: string
+          title: Campus
+          default: shenzhen
+        course_code:
+          type: string
+          title: Course Code
+        course_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Course Name
+      type: object
+      required:
+      - course_code
+      title: CompatTarget
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError

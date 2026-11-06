@@ -1,0 +1,27 @@
+[Unit]
+Description=HOA API - HITSZ OpenAuto 官方 API 与 MCP Server
+Documentation=https://github.com/HITSZ-OpenAuto/hoa-api
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/hoa-api
+EnvironmentFile=/root/hoa-api/.env
+ExecStart=/root/hoa-api/.venv/bin/hoa-api serve
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hoa-api
+
+# 基础加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/root/hoa-api/data
+
+[Install]
+WantedBy=multi-user.target

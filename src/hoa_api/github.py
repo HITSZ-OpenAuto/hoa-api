@@ -1,0 +1,136 @@
+"""GitHub 访问层：支持 ETag 条件请求，避免重复消耗 API 配额。"""
+
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+from typing import Any
+
+import httpx
+
+RETRY_STATUS = {429, 500, 502, 503, 504}
+
+
+@dataclass
+class FetchResult:
+    """一次条件请求的结果。"""
+
+    content: str | None = None
+    data: Any = None
+    content_bytes: bytes | None = None
+    etag: str | None = None
+    not_modified: bool = False
+    status: int = 0
+
+    @property
+    def ok(self) -> bool:
+        return self.status == 0 or 200 <= self.status < 300
+
+
+class GitHubClient:
+    """轻量 GitHub 客户端（只读）。"""
+
+    def __init__(
+        self,
+        token: str | None = None,
+        user_agent: str = "hoa-api/1.0",
+        timeout: float = 30.0,
+        max_retries: int = 3,
+    ) -> None:
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": user_agent,
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        self._client = httpx.Client(headers=headers, timeout=timeout, follow_redirects=True)
+        self._max_retries = max_retries
+        self._raw = httpx.Client(
+            headers={"User-Agent": user_agent},
+            timeout=timeout,
+            follow_redirects=True,
+        )
+
+    def close(self) -> None:
+        self._client.close()
+        self._raw.close()
+
+    def __enter__(self) -> GitHubClient:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    # ---------- 内部 ----------
+
+    def _request(
+        self,
+        client: httpx.Client,
+        url: str,
+        etag: str | None,
+        accept: str | None = None,
+        binary: bool = False,
+    ) -> FetchResult:
+        headers = {}
+        if accept:
+            headers["Accept"] = accept
+        if etag:
+            headers["If-None-Match"] = etag
+
+        last_error: Exception | None = None
+        for attempt in range(self._max_retries):
+            try:
+                response = client.get(url, headers=headers)
+            except httpx.HTTPError as exc:  # 网络抖动
+                last_error = exc
+                time.sleep(1.5 * (attempt + 1))
+                continue
+
+            if response.status_code == 304:
+                return FetchResult(etag=etag, not_modified=True, status=304)
+            if response.status_code == 404:
+                return FetchResult(status=404)
+            if response.status_code in RETRY_STATUS:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            if response.status_code >= 400:
+                return FetchResult(status=response.status_code)
+
+            new_etag = response.headers.get("etag")
+            if binary:
+                return FetchResult(
+                    content_bytes=response.content, etag=new_etag, status=response.status_code
+                )
+            return FetchResult(content=response.text, etag=new_etag, status=response.status_code)
+
+        raise RuntimeError(f"请求失败: {url} ({last_error})")
+
+    # ---------- 公开 ----------
+
+    def get_text(self, url: str, etag: str | None = None) -> FetchResult:
+        """取文本内容（raw.githubusercontent 或任意 URL）。"""
+        return self._request(self._raw, url, etag, accept="text/plain, */*")
+
+    def get_bytes(self, url: str) -> FetchResult:
+        """取二进制内容（如 tarball）。"""
+        return self._request(self._raw, url, None, accept="*/*", binary=True)
+
+    def get_json(self, url: str, etag: str | None = None) -> FetchResult:
+        """取 JSON（api.github.com）。"""
+        result = self._request(self._client, url, etag, accept="application/vnd.github+json")
+        if result.content is None:
+            return result
+        import json
+
+        try:
+            result.data = json.loads(result.content)
+        except ValueError:
+            result.status = 500
+        return result
+
+    def raw_url(self, org: str, repo: str, ref: str, path: str) -> str:
+        return f"https://raw.githubusercontent.com/{org}/{repo}/{ref}/{path}"
+
+    def api_url(self, path: str) -> str:
+        return f"https://api.github.com{path}"
