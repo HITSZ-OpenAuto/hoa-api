@@ -160,9 +160,20 @@ class GitHubClient:
     def get_file_text(
         self, org: str, repo: str, ref: str, path: str, etag: str | None = None
     ) -> FetchResult:
-        """取仓库内文件文本，自动在 raw / Contents API 之间选择可用通道。"""
+        """取仓库内文件文本。
+
+        raw.githubusercontent.com 在部分网络下不稳定，因此单文件失败时
+        立即退回 Contents API，而不是让整轮同步卡住。
+        """
         if self.probe_raw():
-            return self.get_text(self.raw_url(org, repo, ref, path), etag)
+            try:
+                result = self.get_text(self.raw_url(org, repo, ref, path), etag)
+                if result.status != 0 and result.status != 404:
+                    return result
+                if result.status == 404:
+                    return result
+            except (RuntimeError, httpx.HTTPError):
+                pass
         return self.get_contents(org, repo, path, ref, etag)
 
     def get_contents(
