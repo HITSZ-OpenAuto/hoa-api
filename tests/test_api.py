@@ -239,7 +239,7 @@ def test_compat_layer_has_wider_rate_limit(tmp_path):
     config = Config(
         db_path=str(tmp_path / "limit.db"),
         rate_limit_per_min=2,
-        compat_rate_limit_per_min=50,
+        compat_rate_limit_per_min_override=50,
     )
     store = Store(config.db_path)
     app = create_app(config, store)
