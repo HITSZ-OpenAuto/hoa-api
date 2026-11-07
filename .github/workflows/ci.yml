@@ -46,6 +46,42 @@ jobs:
             exit 1
           fi
 
+  smoke:
+    name: 端到端冒烟测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: 生成种子库并启动服务
+        run: |
+          python scripts/seed_db.py --out /tmp/hoa-seed.db
+          HOA_DB_PATH=/tmp/hoa-seed.db HOA_PORT=18099 \
+            nohup hoa-api serve --no-sync > /tmp/serve.log 2>&1 &
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18099/api/v1/meta >/dev/null 2>&1; then
+              echo "服务已就绪"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:18099/api/v1/meta > /dev/null
+
+      - name: 冒烟测试（REST + MCP + 兼容层）
+        run: python scripts/smoke_test.py --base-url http://127.0.0.1:18099 --expect-data
+
+      - name: 服务日志
+        if: failure()
+        run: cat /tmp/serve.log
+
   image:
     name: 构建镜像
     runs-on: ubuntu-latest
