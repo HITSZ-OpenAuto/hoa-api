@@ -160,7 +160,8 @@ vi .env
 | `HOA_DB_PATH` | SQLite 路径，目录需可写 |
 | `HOA_PORT` | 监听端口，默认 8099 |
 | `HOA_SYNC_INTERVAL_SEC` | 同步间隔，默认 21600（6 小时） |
-| `HOA_MCP_ALLOWED_HOSTS` | 反代后的 Host 白名单，防 DNS 重绑定 |
+| `HOA_MCP_ALLOWED_HOSTS` | 反代后的 Host 白名单，防 DNS 重绑定。未写端口的条目会自动补一份 `:*` 通配，所以 `api.hoa.moe` 同时覆盖 `api.hoa.moe` 与 `api.hoa.moe:8443` |
+| `HOA_COMPAT_RATE_LIMIT_PER_MIN` | 兼容层 `/v1/*` 的限流阈值，留空则取 `HOA_RATE_LIMIT_PER_MIN` 的 10 倍 |
 
 ### B3. 首次同步
 
@@ -261,6 +262,7 @@ docker run --rm -v hoa-api-data:/data -v "$PWD":/backup alpine \
 | 同步报 `GitHub API rate limit exceeded` | 匿名配额 | 配置 token |
 | MCP `initialize` 返回 404 | nginx 未关闭缓冲 / 路径不对 | 检查 `location = /mcp` 与 `proxy_buffering off;` |
 | MCP 返回 `Invalid Host header` | 反代后 Host 未加入白名单 | 设置 `HOA_MCP_ALLOWED_HOSTS` |
+| MCP 返回 421，直连 IP + 端口被拒 | Host 头带端口（如 `1.2.3.4:8099`），而白名单只写了裸 IP | 把源站公网 IP 一并写进 `HOA_MCP_ALLOWED_HOSTS`；未写端口的条目会自动补 `:*` 通配 |
 | Traefik 对新域名返回 404 | router 带 `tls` 段只绑定 TLS entrypoint，或文件未热加载 | 拆成 HTTP/HTTPS 两个 router；确认文件在 `dynamic/` 目录内 |
 | 远端脚本报 `GITHUB_OUTPUT: parameter not set` | 远端是 zsh，该变量只存在于 runner | 远端脚本用 `bash <<'BASH_EOF'` 包裹，或改用 workflow input 传值 |
 | `429` 频繁 | 触发限流 | 提高 `HOA_RATE_LIMIT_PER_MIN`，或使用 API Key（v2） |

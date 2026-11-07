@@ -23,6 +23,17 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _has_explicit_port(host: str) -> bool:
+    """判断 Host 条目是否已经写了端口。
+
+    IPv6 字面量形如 ``[::1]`` 或 ``[::1]:8099``，要单独处理。
+    """
+    if host.startswith("["):
+        closing = host.find("]")
+        return closing != -1 and ":" in host[closing:]
+    return ":" in host
+
+
 @dataclass(frozen=True)
 class Config:
     """服务配置。"""
@@ -49,6 +60,10 @@ class Config:
     host: str = os.getenv("HOA_HOST", "0.0.0.0")
     port: int = _env_int("HOA_PORT", 8099)
     rate_limit_per_min: int = _env_int("HOA_RATE_LIMIT_PER_MIN", 60)
+    # 兼容层（/v1/*）的限流阈值。旧 course-server 只在 localhost 提供服务且无限流，
+    # HIT-A 切过来后不能因为限流拿到 429，因此单独放宽，但仍保留上限防止滥用。
+    # 留 0 表示跟随 rate_limit_per_min 的 10 倍（见 compat_rate_limit_per_min 属性）。
+    compat_rate_limit_per_min_override: int = _env_int("HOA_COMPAT_RATE_LIMIT_PER_MIN", 0)
     cors_origins: str = os.getenv("HOA_CORS_ORIGINS", "*")
 
     # 同步
@@ -71,11 +86,38 @@ class Config:
 
     @property
     def mcp_allowed_host_list(self) -> list[str]:
-        return [item.strip() for item in self.mcp_allowed_hosts.split(",") if item.strip()]
+        """MCP 的 Host 白名单。
+
+        MCP SDK 的校验是「精确匹配」或「``host:*`` 通配」，不会自动去掉端口。
+        而 HTTP 的 ``Host`` 头在非默认端口上必然带端口（``127.0.0.1:8099``），
+        只写裸主机名会让所有直连访问被 DNS 重绑定防护拒成 421。
+        因此这里为每个未指定端口的条目补一份 ``:*`` 通配。
+        """
+        hosts: list[str] = []
+        for raw in self.mcp_allowed_hosts.split(","):
+            item = raw.strip()
+            if not item:
+                continue
+            hosts.append(item)
+            if not item.endswith(":*") and not _has_explicit_port(item):
+                hosts.append(f"{item}:*")
+        return hosts
 
     @property
     def mcp_allowed_origin_list(self) -> list[str]:
         return [item.strip() for item in self.mcp_allowed_origins.split(",") if item.strip()]
+
+    @property
+    def compat_rate_limit_per_min(self) -> int:
+        """兼容层的限流阈值。
+
+        默认是公开 API 的 10 倍；用 ``HOA_COMPAT_RATE_LIMIT_PER_MIN`` 可单独指定。
+        这里做成属性而不是字段，才能保证无论阈值来自环境变量还是代码传入，
+        两者始终保持一致。
+        """
+        if self.compat_rate_limit_per_min_override:
+            return self.compat_rate_limit_per_min_override
+        return self.rate_limit_per_min * 10
 
     @property
     def public_origin_url(self) -> str:

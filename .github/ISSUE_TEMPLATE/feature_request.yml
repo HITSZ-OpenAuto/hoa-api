@@ -1,0 +1,61 @@
+name: Feature Request
+description: Suggest an idea for this project.
+title: '[Feature]: '
+labels: ['enhancement', 'triage']
+assignees: []
+type: feature
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this feature request!
+
+        本仓库对外提供 REST API 与 MCP Server。两类入口都需要覆盖时请一并说明，
+        并注明是否会影响 `/v1` 兼容层的既有语义。
+  - type: textarea
+    id: description
+    attributes:
+      label: Feature description
+      description: A clear and concise description of what the feature is.
+      placeholder: Describe the feature...
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem it solves
+      description: What problem does this feature solve? Is your feature request related to a problem?
+      placeholder: I'm always frustrated when...
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: A clear and concise description of what you want to happen.
+      placeholder: Describe your proposed solution...
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface should carry it?
+      multiple: true
+      options:
+        - REST (/api/v1/*)
+        - MCP (/mcp)
+        - 兼容层 (/v1/*)
+        - 数据同步 / 采集
+        - 部署 / CI
+        - Documentation
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility impact
+      description: 这个改动是否会影响 `/v1` 兼容层与旧 course-server 的一致性？
+      placeholder: 不影响 / 仅新增字段 / 会改变检索结果，请说明
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Add any other context about the feature request here.

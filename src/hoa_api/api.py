@@ -92,7 +92,8 @@ def create_app(config: Config | None = None, store: Store | None = None) -> Fast
     config = config or get_config()
     store = store or Store(config.db_path)
     service = Service(store, config)
-    limiter = RateLimiter(config.rate_limit_per_min)
+    public_limiter = RateLimiter(config.rate_limit_per_min)
+    compat_limiter = RateLimiter(config.compat_rate_limit_per_min)
 
     app = FastAPI(
         title=API_TITLE,
@@ -121,6 +122,9 @@ def create_app(config: Config | None = None, store: Store | None = None) -> Fast
     @app.middleware("http")
     async def rate_limit_and_etag(request: Request, call_next: Any) -> Response:
         client = request.client.host if request.client else "unknown"
+        # 兼容层给 HIT-A 用的，阈值比公开 API 宽（旧服务无限流）
+        is_compat = request.url.path.startswith("/v1/")
+        limiter = compat_limiter if is_compat else public_limiter
         allowed, retry_after = limiter.allow(client)
         if not allowed:
             return JSONResponse(
