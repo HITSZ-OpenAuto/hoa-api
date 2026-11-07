@@ -455,6 +455,11 @@ jobs:
             fi
 
             # 域名白名单同步给 MCP 层（防 DNS 重绑定）
+            # 源站公网 IP 也放进白名单，这样直连端口调试时 Host 头不会被拦
+            origin_ip="$(curl -fsS --max-time 8 https://api.ipify.org 2>/dev/null || true)"
+            if [ -n "${origin_ip}" ]; then
+              domains="${domains},${origin_ip}"
+            fi
             host_allow="$(echo "${domains}" | tr ',' '\n' | sed '/^$/d' | paste -sd, -)"
             host_allow="localhost,127.0.0.1,[::1],${host_allow}"
 
