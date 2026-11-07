@@ -49,6 +49,11 @@ class Config:
     host: str = os.getenv("HOA_HOST", "0.0.0.0")
     port: int = _env_int("HOA_PORT", 8099)
     rate_limit_per_min: int = _env_int("HOA_RATE_LIMIT_PER_MIN", 60)
+    # 兼容层（/v1/*）的限流阈值。旧 course-server 只在 localhost 提供服务且无限流，
+    # HIT-A 切过来后不能因为限流拿到 429，因此单独放宽，但仍保留上限防止滥用。
+    compat_rate_limit_per_min: int = _env_int("HOA_COMPAT_RATE_LIMIT_PER_MIN", 0) or (
+        _env_int("HOA_RATE_LIMIT_PER_MIN", 60) * 10
+    )
     cors_origins: str = os.getenv("HOA_CORS_ORIGINS", "*")
 
     # 同步

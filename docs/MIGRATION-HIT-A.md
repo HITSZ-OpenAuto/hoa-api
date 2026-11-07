@@ -140,6 +140,20 @@ curl -s localhost:8080/v1/skills/courses.search:invoke \
 | 检索字段 | 代码 / 名称 / 仓库 / 教师 / **子课程别名** + **昵称表** + GitHub 代码兜底 | 同上（本地等价实现） | 无 |
 | `limit` 参数 | **被忽略**（最多返回 200 条） | 兼容层同样忽略 | 无 |
 | 课程清单 | 组织的全部仓库 | 以 `repos_list.txt` 为准 | 已删除的仓不再出现（见下） |
+| 限流 | 旧服务只在 localhost 提供服务，**不限流** | 公开 API 按 IP 限流；**兼容层 `/v1/*` 阈值放宽到 10 倍**（默认 1200/min） | 正常 agent 流量不会触发；若真遇到 429，调 `HOA_COMPAT_RATE_LIMIT_PER_MIN` |
+
+### 4.0 一致性检查脚本
+
+兼容层"不许漂移"需要有可复现的验证手段：
+
+```bash
+# 在能同时访问新旧服务的地方（例如部署了兜底服务的机器）
+python scripts/compare_compat.py --old http://localhost:8081 --new http://localhost:8099
+```
+
+脚本用 HIT-A 的真实报文格式打两个服务，比对检索结果的课程代码集合与 `course:read` 的响应结构。
+当前基线（147 个查询 × 3 个 campus）：**检索覆盖 138/147，缺口全部是 `SOPR`**（已删除的仓），
+`course:read` 结构 9/9 一致。
 
 ### 4.1 跨校区不是缺口
 

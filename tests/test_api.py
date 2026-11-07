@@ -228,3 +228,32 @@ def test_compat_course_read_not_found(client):
     data = resp.json()
     assert data["ok"] is False
     assert data["error"]["code"] == "COURSE_NOT_FOUND"
+
+
+def test_compat_layer_has_wider_rate_limit(tmp_path):
+    """兼容层限流阈值必须比公开 API 宽。
+
+    旧 course-server 只在 localhost 提供服务且不限流；HIT-A 切过来后如果
+    被公开 API 的阈值拦成 429，就是一次真实的行为回归。
+    """
+    config = Config(
+        db_path=str(tmp_path / "limit.db"),
+        rate_limit_per_min=2,
+        compat_rate_limit_per_min=50,
+    )
+    store = Store(config.db_path)
+    app = create_app(config, store)
+    with TestClient(app) as test_client:
+        public_codes = [
+            test_client.get("/api/v1/courses").status_code for _ in range(6)
+        ]
+        compat_codes = [
+            test_client.post(
+                "/v1/courses:search", json={"keyword": "机器人"}
+            ).status_code
+            for _ in range(6)
+        ]
+    store.close()
+
+    assert 429 in public_codes, "公开 API 的限流应当生效"
+    assert 429 not in compat_codes, "兼容层不应被公开 API 的阈值拦成 429"

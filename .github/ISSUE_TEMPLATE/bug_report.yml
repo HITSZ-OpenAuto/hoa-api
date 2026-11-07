@@ -1,0 +1,66 @@
+name: Bug Report
+description: File a bug report.
+title: '[Bug]: '
+labels: ['bug', 'triage']
+assignees: []
+type: bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report!
+
+        本仓库服务 HITSZ 课程数据。反馈数据缺失时，请一并给出课程代码（如 `AUTO3005`）。
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of what the bug is.
+      placeholder: Describe the bug...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: To Reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. 请求 https://api.hoa.moe/api/v1/courses?q=自动控制
+        2. 观察返回结果
+        3. 期望 ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: A clear and concise description of what you expected to happen.
+      placeholder: What did you expect to happen?
+    validations:
+      required: true
+  - type: dropdown
+    id: endpoint
+    attributes:
+      label: Which endpoint is affected?
+      multiple: true
+      options:
+        - REST (/api/v1/*)
+        - MCP (/mcp)
+        - 兼容层 (/v1/*)
+        - 部署 / CI
+        - 数据同步
+        - Other
+  - type: textarea
+    id: payload
+    attributes:
+      label: Request payload or response snippet
+      description: 复现用的请求体或返回片段（可脱敏）。
+      placeholder: |
+        curl -s -X POST https://api.hoa.moe/v1/courses:search \
+          -H 'Content-Type: application/json' \
+          -d '{"keyword":"机器人","limit":5}'
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Add any other context about the problem here.
