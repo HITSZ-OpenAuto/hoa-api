@@ -574,7 +574,7 @@ jobs:
 
   verify:
     name: 外网验证
-    needs: [deploy, dns]
+    needs: [deploy, dns, probe]
     runs-on: ubuntu-latest
     steps:
       - name: 加入组织 Tailscale 网络
@@ -616,6 +616,55 @@ jobs:
           fi
           head -c 300 /tmp/mcp.json
           echo
+
+      # 直连源站端口（绕过 Traefik），验证 MCP 的 Host 白名单：
+      #   - 源站公网 IP 在白名单里，且配置侧为未写端口的条目补了「:*」通配，
+      #     所以 Host 带端口也应放行（200）
+      #   - 未知 Host 必须仍被 DNS 重绑定防护拒掉（421）
+      - name: 校验 MCP Host 白名单
+        env:
+          VPS_HOST: ${{ inputs.vps_host }}
+          APP_PORT: ${{ inputs.vps_app_port }}
+          ORIGIN_IP: ${{ needs.probe.outputs.origin_ip }}
+        run: |
+          set -uo pipefail
+          if [ -z "${ORIGIN_IP}" ]; then
+            echo "::notice::未探测到源站公网 IP，跳过 Host 白名单校验"
+            exit 0
+          fi
+          base="http://${VPS_HOST}:${APP_PORT}"
+
+          # 先确认端口本身可达（REST 不做 Host 校验），
+          # 以便把「端口不通」与「白名单不放行」区分开
+          reach_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "${base}/api/v1/meta" || true)"
+          echo "  ${base}/api/v1/meta → HTTP ${reach_code}"
+          if [ "${reach_code}" != "200" ]; then
+            echo "::notice::源站端口在 Tailscale 上不可达，跳过 Host 白名单校验"
+            exit 0
+          fi
+
+          payload='{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+          ok_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "${base}/mcp" \
+            -H "Host: ${ORIGIN_IP}:${APP_PORT}" \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -d "${payload}" || true)"
+          echo "  直连 (Host: ${ORIGIN_IP}:${APP_PORT}) → HTTP ${ok_code}"
+          if [ "${ok_code}" != "200" ]; then
+            echo "::error::源站 IP 直连被拒（期望 200，实际 ${ok_code}），白名单或端口通配有问题"
+            exit 1
+          fi
+
+          bad_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "${base}/mcp" \
+            -H 'Host: evil.example.com' \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -d "${payload}" || true)"
+          echo "  直连 (Host: evil.example.com) → HTTP ${bad_code}"
+          if [ "${bad_code}" != "421" ]; then
+            echo "::error::伪造 Host 未被拒（期望 421，实际 ${bad_code}），DNS 重绑定防护失效"
+            exit 1
+          fi
 
       # 公网域名：DNS 尚未添加时允许失败，仅提示
       - name: 校验公开域名
